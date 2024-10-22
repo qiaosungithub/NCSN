@@ -12,6 +12,7 @@ import numpy as np
 import torch
 import torch.nn.functional as F
 import torchvision
+from ema import EMAHelper
 
 import os
 
@@ -31,6 +32,9 @@ def get_denoising_dir(time_str, epoch):
 
 def get_model_path(time_str, epoch):
     return f"/nobackup/users/sqa24/NCSN/{time_str}/models/{epoch:03d}.pth"
+
+def get_ema_path(time_str, epoch):
+    return f"/nobackup/users/sqa24/NCSN/{time_str}/models/{epoch:03d}_ema.pth"
 
 def save_py_files(time_str):
     # copy all .py files in "NCSN" to "nobackup/users/sqa24/NCSN/models/time_str"
@@ -59,7 +63,7 @@ def should_eval(epoch, eval_freq):
         return is_square(epoch)
     return (epoch+1) % eval_freq == 0
 
-def train(epochs, model, optimizer, criterion, train_loader, val_loader, sigmas, eps, T, time_str, eval_freq=5):
+def train(epochs, model, optimizer, criterion, train_loader, val_loader, sigmas, eps, T, time_str, eval_freq=5, ema_decay=None):
     # Set random seed for reproducibility
     seed = 42
     np.random.seed(seed)
@@ -92,6 +96,10 @@ def train(epochs, model, optimizer, criterion, train_loader, val_loader, sigmas,
 
     best_mse = float('inf')
 
+    if ema_decay is not None:
+        ema_helper = EMAHelper(ema_decay)
+        ema_helper.register(model)
+
     for epoch in range(epochs):
         model.train()
         running_loss = 0.0
@@ -114,6 +122,9 @@ def train(epochs, model, optimizer, criterion, train_loader, val_loader, sigmas,
             loss.backward()
             optimizer.step()
 
+            if ema_decay is not None:
+                ema_helper.update(model)
+
             running_loss += loss.item()
             progress_bar.set_postfix({'Train Loss': running_loss / (progress_bar.n + 1)})
 
@@ -130,17 +141,24 @@ def train(epochs, model, optimizer, criterion, train_loader, val_loader, sigmas,
             best_matching_loss = train_loss
         model_path = get_model_path(time_str, epoch)
         torch.save(model.state_dict(), model_path)
+        if ema_decay is not None:
+            ema_path = get_ema_path(time_str, epoch)
+            torch.save(ema_helper.state_dict(), ema_path)
 
         if should_eval(epoch, eval_freq):
             # generate samples
-            model.eval()
+            if ema_decay is not None:
+                test_model = ema_helper.ema_copy(model)
+            else:
+                test_model = model
+            test_model.eval()
             with torch.no_grad():
-                x = torch.rand(64, 1, 28, 28).cuda()
-                samples = langevin(model, x, sigmas, eps, T, clamp=False)
+                x = torch.randn(64, 1, 28, 28).cuda() * sigmas[0]
+                samples = langevin(test_model, x, sigmas, eps, T, clamp=False)
                 save_image(samples, sample_dir + "/{i:03d}.png".format(i=epoch))
 
             # evaluate denoising
-            c_mse, r_mse, original, broken, recovered = evaluate_denoising(model, sigmas, eps, T, val_loader, outdir)
+            c_mse, r_mse, original, broken, recovered = evaluate_denoising(test_model, sigmas, eps, T, val_loader, outdir)
             denoising_dir = get_denoising_dir(time_str, epoch)
             torchvision.utils.save_image(
                 original, denoising_dir + "/groundtruth.png", nrow=10)
