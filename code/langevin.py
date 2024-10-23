@@ -2,9 +2,10 @@ import torch
 import torchvision
 import os
 from math import sqrt
+import numpy as np
 
 @torch.no_grad()
-def langevin(score_model, x, sigmas, eps, T, save=False, epochs=None, clamp=False, time_str=None):
+def langevin(score_model, x, sigmas, eps, T, save=False, epochs=None, clamp=False, time_str=None, verbose=False):
     # it's better not to clamp
     device = torch.device("cuda") if torch.cuda.is_available() else torch.device("cpu")
     bs = x.shape[0]
@@ -18,9 +19,18 @@ def langevin(score_model, x, sigmas, eps, T, save=False, epochs=None, clamp=Fals
         for t in range(T):
             noise = torch.randn_like(x).cuda()
             assert indices.shape == torch.Size([bs,])
-            x = x + alpha / 2 * score_model(x, indices) + sqrt(alpha) * noise
+            grad = score_model(x, indices)
+            x = x + alpha / 2 * grad + sqrt(alpha) * noise
             if clamp:
                 x = torch.clamp(x, 0, 1)
+            if verbose:
+                grad_norm = torch.norm(grad.view(bs, -1), dim=1).mean()
+                image_norm = torch.norm(x.view(bs, -1), dim=1).mean()
+                noise_norm = torch.norm(noise.view(noise.shape[0], -1), dim=-1).mean()
+                snr = np.sqrt(alpha) * grad_norm / noise_norm # signal to noise ratio
+                grad_mean_norm = torch.norm(grad.mean(dim=0).view(-1)) ** 2 * sigma ** 2
+                print("level: {}, step_size: {}, grad_norm: {}, image_norm: {}, snr: {}, grad_mean_norm: {}".format(
+                                i, alpha, grad_norm.item(), image_norm.item(), snr.item(), grad_mean_norm.item()))
         if save:
             if i % (len(sigmas) // 10) == (len(sigmas) - 1) % (len(sigmas) // 10):
                 all_samples.append(x.clone().cpu())
@@ -48,7 +58,7 @@ def langevin(score_model, x, sigmas, eps, T, save=False, epochs=None, clamp=Fals
     return x
 
 @torch.no_grad()
-def langevin_masked(score_model, x, sigmas, eps, T, mask, save=False, epochs=None, clamp=False):
+def langevin_masked(score_model, x, sigmas, eps, T, mask, save=False, epochs=None, clamp=False, verbose=False):
     device = torch.device("cuda") if torch.cuda.is_available() else torch.device("cpu")
     bs = x.shape[0]
     all_samples = []
@@ -63,9 +73,18 @@ def langevin_masked(score_model, x, sigmas, eps, T, mask, save=False, epochs=Non
         for t in range(T):
             noise = torch.randn_like(x).cuda()
             assert indices.shape == torch.Size([bs,])
-            x = x + (alpha / 2 * score_model(x, indices) + sqrt(alpha) * noise) * reverse_mask
+            grad = score_model(x, indices)
+            x = x + (alpha / 2 * grad + sqrt(alpha) * noise) * reverse_mask
             if clamp:
                 x = torch.clamp(x, 0, 1)
+            if verbose:
+                grad_norm = torch.norm(grad.view(bs, -1), dim=1).mean()
+                image_norm = torch.norm(x.view(bs, -1), dim=1).mean()
+                noise_norm = torch.norm(noise.view(noise.shape[0], -1), dim=-1).mean()
+                snr = np.sqrt(alpha) * grad_norm / noise_norm # signal to noise ratio
+                grad_mean_norm = torch.norm(grad.mean(dim=0).view(-1)) ** 2 * sigma ** 2
+                print("level: {}, step_size: {}, grad_norm: {}, image_norm: {}, snr: {}, grad_mean_norm: {}".format(
+                                i, alpha, grad_norm.item(), image_norm.item(), snr.item(), grad_mean_norm.item()))
         if save:
             if i % (len(sigmas) // 10) == (len(sigmas) - 1) % (len(sigmas) // 10):
                 all_samples.append(x.clone().cpu())

@@ -202,7 +202,8 @@ def evaluate_denoising(score_model, sigmas, eps, T, val_loader, outdir, visualiz
         broken_data, mask = corruption(data, type_='ebm')
 
         save = True if visualize else False
-        recovered_img = langevin_masked(score_model, broken_data, sigmas, eps, T, mask, save=save, clamp=False, epochs=0)
+        verbose = True if visualize else False
+        recovered_img = langevin_masked(score_model, broken_data, sigmas, eps, T, mask, save=save, clamp=False, epochs=0, verbose=verbose)
 
         mse += np.mean((data.detach().cpu().numpy().reshape(-1, 28 * 28) - recovered_img.detach().cpu().numpy().reshape(-1, 28 * 28)) ** 2, -1).sum().item()
         corruption_mse += np.mean((data.detach().cpu().numpy().reshape(-1, 28 * 28) - broken_data.detach().cpu().numpy().reshape(-1, 28 * 28)) ** 2, -1).sum().item()
