@@ -174,5 +174,5 @@ class UNetv2(nn.Module):
 
         assert x.size() == torch.Size([bs, 1, 28, 28])
         noise_level = self.sigmas[indices]
-        x = x / noise_level
+        x = x / noise_level.unsqueeze(1).unsqueeze(2).unsqueeze(3).cuda()
         return x

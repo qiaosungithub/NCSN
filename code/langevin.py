@@ -13,10 +13,10 @@ def langevin(score_model, x, sigmas, eps, T, save=False, epochs=None, clamp=Fals
     for i in range(len(sigmas)):
         sigma = sigmas[i]
         alpha = eps * (sigma ** 2) / (sigmas[-1] ** 2)
+        indices = i * torch.ones(bs, dtype=torch.long)
+        indices = indices.cuda()
         for t in range(T):
             noise = torch.randn_like(x).cuda()
-            indices = i * torch.ones(bs, dtype=torch.long)
-            indices = indices.cuda()
             assert indices.shape == torch.Size([bs,])
             x = x + alpha / 2 * score_model(x, indices) + sqrt(alpha) * noise
             if clamp:
@@ -27,7 +27,7 @@ def langevin(score_model, x, sigmas, eps, T, save=False, epochs=None, clamp=Fals
 
     if save:
         assert x.shape[0] == 10
-        assert len(sigmas) == 10
+        # assert len(sigmas) == 10
         assert epochs is not None
         if time_str is not None:
             save_dir = f'./NCSN/denoising_process/{time_str}/'
@@ -37,7 +37,9 @@ def langevin(score_model, x, sigmas, eps, T, save=False, epochs=None, clamp=Fals
         if not os.path.exists(save_dir):
             os.makedirs(save_dir)
         # concatenate all samples
+        all_samples = all_samples[:10]
         all_samples = torch.cat(all_samples, dim=0)
+        # print(all_samples.shape)
         assert all_samples.shape == torch.Size([100, 1, 28, 28])
         # save the image
         grid = torchvision.utils.make_grid(all_samples, nrow=10, padding=2, pad_value=1)
@@ -56,10 +58,10 @@ def langevin_masked(score_model, x, sigmas, eps, T, mask, save=False, epochs=Non
     for i in range(len(sigmas)):
         sigma = sigmas[i]
         alpha = eps * (sigma ** 2) / (sigmas[-1] ** 2)
+        indices = i * torch.ones(bs, dtype=torch.long)
+        indices = indices.cuda()
         for t in range(T):
             noise = torch.randn_like(x).cuda()
-            indices = i * torch.ones(bs, dtype=torch.long)
-            indices = indices.cuda()
             assert indices.shape == torch.Size([bs,])
             x = x + (alpha / 2 * score_model(x, indices) + sqrt(alpha) * noise) * reverse_mask
             if clamp:
@@ -70,13 +72,14 @@ def langevin_masked(score_model, x, sigmas, eps, T, mask, save=False, epochs=Non
 
     if save:
         assert x.shape[0] == 10
-        assert len(sigmas) == 10
+        # assert len(sigmas) == 10
         assert epochs is not None
         save_dir = './NCSN/denoising_process/'
         filename = '{:>03d}.png'.format(epochs)
         if not os.path.exists(save_dir):
             os.makedirs(save_dir)
         # concatenate all samples
+        all_samples = all_samples[:10]
         all_samples = torch.cat(all_samples, dim=0)
         assert all_samples.shape == torch.Size([100, 1, 28, 28])
         # save the image

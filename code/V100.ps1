@@ -1,4 +1,7 @@
-# cd C:\Users\14695\Desktop\group\personal_experiments\diffusion\NCSN_1
+# init params
+param (
+    [string]$filter="*.py"
+)
 
 $remoteUser = "sqa24"
 # $remoteUser = "dcao2028" # remember to change this
@@ -14,7 +17,7 @@ $remoteHost = "satori-login-002.mit.edu"
 $remoteDir = "NCSN" # remember to change this
 
 # 遍历当前目录下的所有文件
-Get-ChildItem -File -Filter *.py | ForEach-Object {
+Get-ChildItem -File -Filter $filter | ForEach-Object {
 # Get-ChildItem -File | ForEach-Object {
 
     $localFile = $_.FullName

@@ -34,7 +34,8 @@ class EMAHelper(object):
             module_copy.load_state_dict(inner_module.state_dict())
             module_copy = nn.DataParallel(module_copy)
         else:
-            module_copy = type(module)(module.config).to(module.config.device)
+            # module_copy = type(module)(module.config).to(module.config.device)
+            module_copy = type(module)(sigmas=module.sigmas, activation=module.activation).cuda()
             module_copy.load_state_dict(module.state_dict())
         # module_copy = copy.deepcopy(module)
         self.ema(module_copy)

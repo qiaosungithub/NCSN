@@ -2,17 +2,18 @@ try:
     from NCSN.utils import *
     from NCSN.model import *
     from NCSN.langevin import *
+    from NCSN.ema import EMAHelper
 except:
     from utils import *
     from model import *
     from langevin import *
+    from ema import EMAHelper
 from tqdm import tqdm
 
 import numpy as np
 import torch
 import torch.nn.functional as F
 import torchvision
-from ema import EMAHelper
 
 import os
 
@@ -153,7 +154,7 @@ def train(epochs, model, optimizer, criterion, train_loader, val_loader, sigmas,
                 test_model = model
             test_model.eval()
             with torch.no_grad():
-                x = torch.randn(64, 1, 28, 28).cuda() * sigmas[0]
+                x = torch.randn(64, 1, 28, 28).cuda()
                 samples = langevin(test_model, x, sigmas, eps, T, clamp=False)
                 save_image(samples, sample_dir + "/{i:03d}.png".format(i=epoch))
 
@@ -186,7 +187,7 @@ def make_dataset(model, sigmas, eps, T, n_samples=1000, save=True, save_dir='./N
         for j in tqdm(range(n_samples)): 
             torchvision.utils.save_image(samples[j], os.path.join(save_dir, "{:>03d}.png".format(j)))
 
-def evaluate_denoising(score_model, sigmas, eps, T, val_loader, outdir):
+def evaluate_denoising(score_model, sigmas, eps, T, val_loader, outdir, visualize=False):
     mse = corruption_mse = 0
     n_batches = 0
     score_model.eval()
@@ -200,7 +201,8 @@ def evaluate_denoising(score_model, sigmas, eps, T, val_loader, outdir):
         data = data.cuda()
         broken_data, mask = corruption(data, type_='ebm')
 
-        recovered_img = langevin_masked(score_model, broken_data, sigmas, eps, T, mask, save=False, clamp=False)
+        save = True if visualize else False
+        recovered_img = langevin_masked(score_model, broken_data, sigmas, eps, T, mask, save=save, clamp=False, epochs=0)
 
         mse += np.mean((data.detach().cpu().numpy().reshape(-1, 28 * 28) - recovered_img.detach().cpu().numpy().reshape(-1, 28 * 28)) ** 2, -1).sum().item()
         corruption_mse += np.mean((data.detach().cpu().numpy().reshape(-1, 28 * 28) - broken_data.detach().cpu().numpy().reshape(-1, 28 * 28)) ** 2, -1).sum().item()
@@ -214,7 +216,7 @@ def evaluate_denoising(score_model, sigmas, eps, T, val_loader, outdir):
         # plt.imshow(recovered_img[0].detach().cpu().numpy().reshape(28, 28), cmap='gray')
         # plt.show()
         # break
-        if n_batches >= 2000:
+        if n_batches >= 2000 or visualize:
             break
 
     pbar.close()
