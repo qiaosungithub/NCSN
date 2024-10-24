@@ -5,7 +5,7 @@ try:
     from NCSN.ema import EMAHelper
 except:
     from utils import *
-    from model import *
+    from code.model_sqa import *
     from langevin import *
     from ema import EMAHelper
 from tqdm import tqdm

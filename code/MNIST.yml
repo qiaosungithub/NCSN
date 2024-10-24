@@ -1,0 +1,22 @@
+data:
+  dataset: "MNIST"
+  image_size: 28
+  channels: 1
+  logit_transform: false
+  uniform_dequantization: false
+  gaussian_dequantization: false
+  random_flip: False
+  rescaled: false
+  num_workers: 4
+
+model:
+  sigma_begin: 28
+  num_classes: 75
+  ema: true
+  ema_rate: 0.999
+  spec_norm: false
+  sigma_dist: geometric
+  sigma_end: 0.01
+  normalization: InstanceNorm++
+  nonlinearity: elu
+  ngf: 64

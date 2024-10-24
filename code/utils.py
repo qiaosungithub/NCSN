@@ -4,7 +4,7 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 import os
-
+import numpy as np
 
 def save_model(save_path,
                model,
@@ -179,3 +179,18 @@ def is_square(n):
 
 def hello():
     print('Good luck!')
+
+def get_sigmas(config):
+    if config.model.sigma_dist == 'geometric':
+        sigmas = torch.tensor(
+            np.exp(np.linspace(np.log(config.model.sigma_begin), np.log(config.model.sigma_end),
+                               config.model.num_classes))).float().cuda()
+    elif config.model.sigma_dist == 'uniform':
+        sigmas = torch.tensor(
+            np.linspace(config.model.sigma_begin, config.model.sigma_end, config.model.num_classes)
+        ).float().cuda()
+
+    else:
+        raise NotImplementedError('sigma distribution not supported')
+
+    return sigmas
