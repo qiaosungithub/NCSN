@@ -76,7 +76,6 @@ def train(epochs, model, optimizer, criterion, train_loader, val_loader, sigmas,
 
     save_py_files(time_str)
 
-    device = torch.device("cuda") if torch.cuda.is_available() else torch.device("cpu")
     model = model.cuda()
 
     outdir = get_outdir(time_str)
@@ -93,7 +92,7 @@ def train(epochs, model, optimizer, criterion, train_loader, val_loader, sigmas,
     train_losses = []
     # sigmas = cal_noise_level(init_sigma, final_sigma, n_sigma)
     n_sigma = len(sigmas)
-    sigmas_t = torch.tensor(sigmas, device=device)
+    sigmas_t = torch.tensor(sigmas).cuda()
 
     best_mse = float('inf')
 

@@ -447,12 +447,20 @@ class ResidualBlock(nn.Module):
 
 
     def forward(self, x):
+        # import time
+        # start = time.time()
+        # def show(s): print (
+        #             '\t',s,"Time: ", time.time() - start)
         output = self.normalize1(x)
         output = self.non_linearity(output)
         output = self.conv1(output)
+        # show("conv1")
+        # print("\t output square mean: ", (output**2).mean())
         output = self.normalize2(output)
         output = self.non_linearity(output)
         output = self.conv2(output)
+        # show("conv2")
+        # print("\t output square mean: ", (output**2).mean())
 
         if self.output_dim == self.input_dim and self.resample is None:
             shortcut = x

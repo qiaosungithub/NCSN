@@ -1,6 +1,6 @@
 # init params
 param (
-    [string]$filter="*.py"
+    [string]$f="*.py"
 )
 
 $remoteUser = "sqa24"
@@ -17,7 +17,7 @@ $remoteHost = "satori-login-002.mit.edu"
 $remoteDir = "NCSN" # remember to change this
 
 # 遍历当前目录下的所有文件
-Get-ChildItem -File -Filter $filter | ForEach-Object {
+Get-ChildItem -File -Filter $f | ForEach-Object {
 # Get-ChildItem -File | ForEach-Object {
 
     $localFile = $_.FullName

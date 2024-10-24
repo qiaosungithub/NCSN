@@ -78,6 +78,9 @@ class NCSNv2(nn.Module):
         return x
 
     def forward(self, x, y):
+        # import time
+        # start = time.time()
+        # def show(s): print (s,"Time: ", time.time() - start)
         if not self.logit_transform and not self.rescaled:
             h = 2 * x - 1.
         else:
@@ -86,8 +89,12 @@ class NCSNv2(nn.Module):
         output = self.begin_conv(h)
 
         layer1 = self._compute_cond_module(self.res1, output)
+        # show("layer1")
+        # print("layer1 square mean: ", torch.mean(output ** 2))
         layer2 = self._compute_cond_module(self.res2, layer1)
         layer3 = self._compute_cond_module(self.res3, layer2)
+        # show("layer3")
+        # print("layer3 square mean: ", torch.mean(layer3 ** 2))
         layer4 = self._compute_cond_module(self.res4, layer3)
 
         # print("layer1 shape: ", layer1.shape)
@@ -95,20 +102,29 @@ class NCSNv2(nn.Module):
         # print("layer3 shape: ", layer3.shape)
         # print("layer4 shape: ", layer4.shape)
         # assert False is IsADirectoryError
+        # show("layer4")
+        # print("layer4 square mean: ", torch.mean(layer4 ** 2))
 
         ref1 = self.refine1([layer4], layer4.shape[2:])
         ref2 = self.refine2([layer3, ref1], layer3.shape[2:])
+        # show("ref2")
+        # print("ref2 square mean: ", torch.mean(ref2 ** 2))
         ref3 = self.refine3([layer2, ref2], layer2.shape[2:])
         output = self.refine4([layer1, ref3], layer1.shape[2:])
+        # show("ref4")
+        # print("ref4 square mean: ", torch.mean(output ** 2))
 
         output = self.normalizer(output)
         output = self.act(output)
         output = self.end_conv(output)
+        # show("end_conv")
+        # print("end_conv square mean: ", torch.mean(output ** 2))
 
         used_sigmas = self.sigmas[y].view(x.shape[0], *([1] * len(x.shape[1:])))
 
         output = output / used_sigmas
-
+        # show('end')
+        # print("output square mean: ", torch.mean(output ** 2))
         return output
 
 
