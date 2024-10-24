@@ -2,11 +2,14 @@ import torch.nn as nn
 import torch
 from torch.nn.parameter import Parameter
 import torch.nn.functional as F
-from .normalization import *
 from functools import partial
 import math
 import torch.nn.init as init
 
+try:
+    from NCSN.normalization import *
+except:
+    from normalization import *
 
 def get_act(config):
     if config.model.nonlinearity.lower() == 'elu':
