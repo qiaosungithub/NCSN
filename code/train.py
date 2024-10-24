@@ -1,11 +1,11 @@
 try:
     from NCSN.utils import *
-    from NCSN.model import *
+    # from NCSN.model import *
     from NCSN.langevin import *
     from NCSN.ema import EMAHelper
 except:
     from utils import *
-    from code.model_sqa import *
+    from model_sqa import *
     from langevin import *
     from ema import EMAHelper
 from tqdm import tqdm
