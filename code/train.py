@@ -106,7 +106,7 @@ def train(epochs, model, optimizer, criterion, train_loader, val_loader, sigmas,
         progress_bar = tqdm(train_loader, desc=f'Epoch {epoch+1}/{epochs}', leave=False)
         for b in progress_bar:
             images, _ = b
-            sigma_indices = torch.randint(0, n_sigma, (images.size(0),), device=device)
+            sigma_indices = torch.randint(0, n_sigma, (images.size(0),)).cuda()
             sigma_batch = sigmas_t[sigma_indices].view(-1, 1, 1, 1)
 
             # add noise to images
