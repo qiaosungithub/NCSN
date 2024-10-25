@@ -78,6 +78,11 @@ def train(epochs, model, optimizer, criterion, train_loader, val_loader, sigmas,
 
     model = model.cuda()
 
+    # 使用 DataParallel 将模型并行化
+    if torch.cuda.device_count() > 1:
+        print(f"Using {torch.cuda.device_count()} GPUs")
+        model = torch.nn.DataParallel(model)
+
     outdir = get_outdir(time_str)
     sample_dir = get_sample_dir(time_str)
 

@@ -30,7 +30,7 @@ class EMAHelper(object):
     def ema_copy(self, module):
         if isinstance(module, nn.DataParallel):
             inner_module = module.module
-            module_copy = type(inner_module)(inner_module.config).to(inner_module.config.device)
+            module_copy = type(inner_module)(inner_module.config).cuda()
             module_copy.load_state_dict(inner_module.state_dict())
             module_copy = nn.DataParallel(module_copy)
         else:
