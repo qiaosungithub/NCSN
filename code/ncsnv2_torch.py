@@ -1,6 +1,6 @@
-import flax.linen as nn
-import jax.numpy as jnp
-import zhh.F as F
+import torch.nn as nn
+import numpy as np
+import torch.nn.functional as F
 import torch
 from functools import partial
 try:
