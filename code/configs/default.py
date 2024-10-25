@@ -52,6 +52,7 @@ def get_config():
   config.learning_rate = 0.1
   config.momentum = 0.9
   config.batch_size = 128
+  config.eval_batch_size = 500
   config.shuffle_buffer_size = 16 * 128
   config.prefetch = 10
 

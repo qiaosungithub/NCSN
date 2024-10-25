@@ -19,12 +19,14 @@ from jax import random
 import ml_collections
 import optax
 
-import input_pipeline
-from input_pipeline import prepare_batch_data, prepare_batch_data_sqa, apply_mixup_cutmix_batch, pre_process_batch
-import models
+from torch.utils.data import DataLoader
+from utils import train_set, val_set
+# import input_pipeline
+# from input_pipeline import prepare_batch_data, prepare_batch_data_sqa, apply_mixup_cutmix_batch, pre_process_batch
+import ncsnv2
 
-import utils.writer_util as writer_util  # must be after 'from clu import metric_writers'
-from utils.info_util import print_params
+import kaiming_utils.writer_util as writer_util  # must be after 'from clu import metric_writers'
+from kaiming_utils.info_util import print_params
 
 
 NUM_CLASSES = 1000
@@ -382,11 +384,10 @@ def train_and_evaluate(
 
   rng = random.key(config.seed)
 
-  image_size = 224
+  image_size = config.dataset.image_size
+  assert image_size == 28
 
   logging.info('config.batch_size: {}'.format(config.batch_size))
-
-  # print("position 1")
 
   if config.batch_size % jax.process_count() > 0:
     raise ValueError('Batch size must be divisible by the number of processes')
@@ -397,27 +398,21 @@ def train_and_evaluate(
   if local_batch_size % jax.local_device_count() > 0:
     raise ValueError('Local batch size must be divisible by the number of local devices')
 
-  train_loader, steps_per_epoch = input_pipeline.create_split(
-    config.dataset,
-    local_batch_size,
-    split='train',
-    # split='val' if config.debug else 'train',
-  )
-  eval_loader, steps_per_eval = input_pipeline.create_split(
-    config.dataset,
-    local_batch_size,
-    split='val',
-  )
-  # print("position 2")
+  train_loader = DataLoader(train_set, batch_size=config.batch_size, shuffle=True, drop_last=False, pin_memory=True)
+  steps_per_epoch = len(train_loader)
+  eval_loader = DataLoader(val_set, batch_size=config.eval_batch_size, shuffle=True, drop_last=False, pin_memory=True)
+  steps_per_eval = len(eval_loader)
+
   logging.info('steps_per_epoch: {}'.format(steps_per_epoch))
   logging.info('steps_per_eval: {}'.format(steps_per_eval))
 
   if config.steps_per_eval != -1:
     steps_per_eval = config.steps_per_eval
 
-  base_learning_rate = config.learning_rate * config.batch_size / 512.0 # note that here the input config.learning_rate is 0.0005 in the paper
+  base_learning_rate = config.learning_rate
 
-  model_cls = getattr(models, config.model)
+  model_cls = getattr(ncsnv2, config.model)
+  # 改到这里
   model = create_model(
     model_cls=model_cls, half_precision=config.half_precision,
     dropout_rate=config.dropout_rate,
@@ -425,8 +420,6 @@ def train_and_evaluate(
   )
 
   learning_rate_fn = create_learning_rate_fn(config, base_learning_rate, steps_per_epoch)
-
-  # print("position 3")
 
   state = create_train_state(rng, config, model, image_size, learning_rate_fn)
   state = restore_checkpoint(state, workdir)
