@@ -1,3 +1,6 @@
 code/data/
 code/__pycache__/
 code/train_out.ipynb
+code/log/
+code/tmp/
+code/config.sh
