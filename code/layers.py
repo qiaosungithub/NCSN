@@ -401,6 +401,7 @@ class ConvMeanPool(nn.Module):
 
 class MeanPoolConv(nn.Module):
     def __init__(self, input_dim, output_dim, kernel_size=3, biases=True, spec_norm=False):
+        raise NotImplementedError('MeanPoolConv is not implemented in flax')
         super().__init__()
         self.conv = nn.Conv2d(input_dim, output_dim, kernel_size, stride=1, padding=kernel_size // 2, bias=biases)
         if spec_norm:
@@ -415,6 +416,7 @@ class MeanPoolConv(nn.Module):
 
 class UpsampleConv(nn.Module):
     def __init__(self, input_dim, output_dim, kernel_size=3, biases=True, spec_norm=False):
+        raise NotImplementedError('UpsampleConv is not implemented in flax')
         super().__init__()
         self.conv = nn.Conv2d(input_dim, output_dim, kernel_size, stride=1, padding=kernel_size // 2, bias=biases)
         if spec_norm:
@@ -431,6 +433,7 @@ class UpsampleConv(nn.Module):
 class ConditionalResidualBlock(nn.Module):
     def __init__(self, input_dim, output_dim, num_classes, resample=None, act=nn.ELU(),
                  normalization=ConditionalBatchNorm2d, adjust_padding=False, dilation=None, spec_norm=False):
+        raise NotImplementedError('ConditionalResidualBlock is not implemented in flax')
         super().__init__()
         self.non_linearity = act
         self.input_dim = input_dim
@@ -486,14 +489,25 @@ class ConditionalResidualBlock(nn.Module):
 
 
 class ResidualBlock(nn.Module):
-    def __init__(self, input_dim, output_dim, resample=None, act=nn.ELU(),
-                 normalization=nn.BatchNorm2d, adjust_padding=False, dilation=None, spec_norm=False):
-        super().__init__()
-        self.non_linearity = act
-        self.input_dim = input_dim
-        self.output_dim = output_dim
-        self.resample = resample
-        self.normalization = normalization
+    input_dim: int
+    output_dim: int
+    resample: bool=None
+    act: 知道=nn.elu()
+    normalization: 知道=nn.BatchNorm2d
+    adjust_padding: bool=False
+    dilation: int=None
+    spec_norm: bool=False
+
+    def setup(self):
+        input_dim = self.input_dim
+        output_dim = self.output_dim
+        resample = self.resample
+        act = self.act
+        normalization = self.normalization
+        adjust_padding = self.adjust_padding
+        dilation = self.dilation
+        spec_norm = self.spec_norm
+
         if resample == 'down':
             if dilation is not None:
                 self.conv1 = dilated_conv3x3(input_dim, input_dim, dilation=dilation, spec_norm=spec_norm)
@@ -533,12 +547,12 @@ class ResidualBlock(nn.Module):
         # def show(s): print (
         #             '\t',s,"Time: ", time.time() - start)
         output = self.normalize1(x)
-        output = self.non_linearity(output)
+        output = self.act(output)
         output = self.conv1(output)
         # show("conv1")
         # print("\t output square mean: ", (output**2).mean())
         output = self.normalize2(output)
-        output = self.non_linearity(output)
+        output = self.act(output)
         output = self.conv2(output)
         # show("conv2")
         # print("\t output square mean: ", (output**2).mean())
