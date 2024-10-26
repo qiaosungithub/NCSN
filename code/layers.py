@@ -364,26 +364,36 @@ class CondRefineBlock(nn.Module):
 
         return h
 
-
+int或者tuple反正是形状 = 知道
 class ConvMeanPool(nn.Module):
-    def __init__(self, input_dim, output_dim, kernel_size=3, biases=True, adjust_padding=False, spec_norm=False):
-        super().__init__()
-        if not adjust_padding:
-            conv = nn.Conv2d(input_dim, output_dim, kernel_size, stride=1, padding=kernel_size // 2, bias=biases)
-            if spec_norm:
-                conv = spectral_norm(conv)
-            self.conv = conv
-        else:
-            conv = nn.Conv2d(input_dim, output_dim, kernel_size, stride=1, padding=kernel_size // 2, bias=biases)
-            if spec_norm:
-                conv = spectral_norm(conv)
+    input_dim: int
+    output_dim: int
+    kernel_size: int或者tuple反正是形状=(3, 3)
+    biases: bool=True
+    adjust_padding: bool=False
+    spec_norm: bool=False
 
-            self.conv = nn.Sequential(
-                nn.ZeroPad2d((1, 0, 1, 0)),
-                conv
-            )
+    def setup(self):
+        input_dim = self.input_dim
+        output_dim = self.output_dim
+        kernel_size = self.kernel_size
+        biases = self.biases
+        adjust_padding = self.adjust_padding
+        spec_norm = self.spec_norm
+
+        if type(kernel_size) == int:
+            kernel_size = (kernel_size, kernel_size)
+
+        # conv = nn.Conv2d(input_dim, output_dim, kernel_size, stride=1, padding=kernel_size // 2, bias=biases)
+        conv = nn.Conv(output_dim, kernel_size=kernel_size, strides=(1, 1), padding='SAME', bias=biases)
+        if spec_norm:
+            conv = spectral_norm(conv)
+        self.conv = conv
 
     def forward(self, inputs):
+        if self.adjust_padding:
+            inputs = jnp.pad(inputs, ((0, 0), (0, 0), (1, 0), (1, 0)), mode='constant')
+            
         output = self.conv(inputs)
         output = sum([output[:, :, ::2, ::2], output[:, :, 1::2, ::2],
                       output[:, :, ::2, 1::2], output[:, :, 1::2, 1::2]]) / 4.
