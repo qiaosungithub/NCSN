@@ -1,8 +1,12 @@
-import torch
-import torch.nn as nn
+# import torch
+import flax.linen as nn
+import jax.numpy as jnp
+import flax
+import jax
 
 
 def get_normalization(config, conditional=True):
+    # TODO: change the API
     norm = config.model.normalization
     if conditional:
         if norm == 'NoneNorm':
@@ -35,6 +39,7 @@ def get_normalization(config, conditional=True):
 
 class ConditionalBatchNorm2d(nn.Module):
     def __init__(self, num_features, num_classes, bias=True):
+        raise NotImplementedError("ConditionalBatchNorm2d is not implemented yet!")
         super().__init__()
         self.num_features = num_features
         self.bias = bias
@@ -60,6 +65,7 @@ class ConditionalBatchNorm2d(nn.Module):
 
 class ConditionalInstanceNorm2d(nn.Module):
     def __init__(self, num_features, num_classes, bias=True):
+        raise NotImplementedError("ConditionalInstanceNorm2d is not implemented yet!")
         super().__init__()
         self.num_features = num_features
         self.bias = bias
@@ -85,6 +91,7 @@ class ConditionalInstanceNorm2d(nn.Module):
 
 class ConditionalVarianceNorm2d(nn.Module):
     def __init__(self, num_features, num_classes, bias=False):
+        raise NotImplementedError("ConditionalVarianceNorm2d is not implemented yet!")
         super().__init__()
         self.num_features = num_features
         self.bias = bias
@@ -102,6 +109,7 @@ class ConditionalVarianceNorm2d(nn.Module):
 
 class VarianceNorm2d(nn.Module):
     def __init__(self, num_features, bias=False):
+        raise NotImplementedError("VarianceNorm2d is not implemented yet!")
         super().__init__()
         self.num_features = num_features
         self.bias = bias
@@ -119,6 +127,7 @@ class VarianceNorm2d(nn.Module):
 class ConditionalNoneNorm2d(nn.Module):
     def __init__(self, num_features, num_classes, bias=True):
         super().__init__()
+        raise NotImplementedError("ConditionalNoneNorm2d is not implemented yet!")
         self.num_features = num_features
         self.bias = bias
         if bias:
@@ -142,29 +151,35 @@ class ConditionalNoneNorm2d(nn.Module):
 class NoneNorm2d(nn.Module):
     def __init__(self, num_features, bias=True):
         super().__init__()
+        raise NotImplementedError("NoneNorm2d is not implemented yet!")
 
     def forward(self, x):
         return x
 
 
 class InstanceNorm2dPlus(nn.Module):
-    def __init__(self, num_features, bias=True):
-        super().__init__()
-        self.num_features = num_features
-        self.bias = bias
-        self.instance_norm = nn.InstanceNorm2d(num_features, affine=False, track_running_stats=False)
-        self.alpha = nn.Parameter(torch.zeros(num_features))
-        self.gamma = nn.Parameter(torch.zeros(num_features))
-        self.alpha.data.normal_(1, 0.02)
-        self.gamma.data.normal_(1, 0.02)
+    num_features: int
+    bias: bool=True
+    def setup(self):
+        num_features = self.num_features
+        bias = self.bias
+        # self.instance_norm = nn.InstanceNorm2d(num_features, affine=False, track_running_stats=False)
+        self.instance_norm = nn.InstanceNorm(use_bias=False, use_scale=False, epsilon=1e-5)
+        # self.alpha = nn.Parameter(jnp.zeros(num_features))
+        # self.gamma = nn.Parameter(jnp.zeros(num_features))
+        self.alpha = self.param('alpha', nn.initializers.normal(stddev=0.02), (num_features,))
+        self.gamma = self.param('gamma', nn.initializers.normal(stddev=0.02), (num_features,))
+        # self.alpha.data.normal_(1, 0.02)
+        # self.gamma.data.normal_(1, 0.02)
         if bias:
-            self.beta = nn.Parameter(torch.zeros(num_features))
+            # self.beta = nn.Parameter(jnp.zeros(num_features))
+            self.beta = self.param('beta', nn.initializers.zeros, (num_features,))
 
     def forward(self, x):
-        means = torch.mean(x, dim=(2, 3))
-        m = torch.mean(means, dim=-1, keepdim=True)
-        v = torch.var(means, dim=-1, keepdim=True)
-        means = (means - m) / (torch.sqrt(v + 1e-5))
+        means = jnp.mean(x, dim=(2, 3))
+        m = jnp.mean(means, dim=-1, keepdim=True)
+        v = jnp.var(means, dim=-1, keepdim=True)
+        means = (means - m) / (jnp.sqrt(v + 1e-5))
         h = self.instance_norm(x)
 
         if self.bias:
@@ -178,6 +193,7 @@ class InstanceNorm2dPlus(nn.Module):
 
 class ConditionalInstanceNorm2dPlus(nn.Module):
     def __init__(self, num_features, num_classes, bias=True):
+        raise NotImplementedError("ConditionalInstanceNorm2dPlus is not implemented yet!")
         super().__init__()
         self.num_features = num_features
         self.bias = bias
