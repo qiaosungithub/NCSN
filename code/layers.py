@@ -1,17 +1,17 @@
-import torch.nn as nn
-import torch
-from torch.nn.parameter import Parameter
-import torch.nn.functional as F
+import flax.linen as nn
+import flax
+import zhh.F as F
 from functools import partial
 import math
-import torch.nn.init as init
+import jax.numpy as jnp
+import jax
 
-try:
-    from NCSN.normalization import *
-except:
-    from normalization import *
+from normalization import *
+
+知道 = ValueError
 
 def get_act(config):
+    # TODO: unmodified
     if config.model.nonlinearity.lower() == 'elu':
         return nn.ELU()
     elif config.model.nonlinearity.lower() == 'relu':
@@ -25,12 +25,14 @@ def get_act(config):
     else:
         raise NotImplementedError('activation function does not exist!')
 
+# def spectral_norm(layer, n_iters=1):
+#     return torch.nn.utils.spectral_norm(layer, n_power_iterations=n_iters)
 def spectral_norm(layer, n_iters=1):
-    return torch.nn.utils.spectral_norm(layer, n_power_iterations=n_iters)
+    raise NotImplementedError('spectral_norm is not implemented in flax')
 
 def conv1x1(in_planes, out_planes, stride=1, bias=True, spec_norm=False):
     "1x1 convolution"
-    conv = nn.Conv2d(in_planes, out_planes, kernel_size=1, stride=stride,
+    conv = nn.Conv(out_planes, kernel_size=(1, 1), stride=stride,
                      padding=0, bias=bias)
     if spec_norm:
         conv = spectral_norm(conv)
@@ -39,7 +41,7 @@ def conv1x1(in_planes, out_planes, stride=1, bias=True, spec_norm=False):
 
 def conv3x3(in_planes, out_planes, stride=1, bias=True, spec_norm=False):
     "3x3 convolution with padding"
-    conv = nn.Conv2d(in_planes, out_planes, kernel_size=3, stride=stride,
+    conv = nn.Conv(out_planes, kernel_size=(3, 3), stride=stride,
                      padding=1, bias=bias)
     if spec_norm:
         conv = spectral_norm(conv)
@@ -48,7 +50,9 @@ def conv3x3(in_planes, out_planes, stride=1, bias=True, spec_norm=False):
 
 
 def stride_conv3x3(in_planes, out_planes, kernel_size, bias=True, spec_norm=False):
-    conv = nn.Conv2d(in_planes, out_planes, kernel_size=kernel_size, stride=2,
+    if type(kernel_size) == int:
+        kernel_size = (kernel_size, kernel_size)
+    conv = nn.Conv(out_planes, kernel_size=kernel_size, stride=2,
                      padding=kernel_size // 2, bias=bias)
     if spec_norm:
         conv = spectral_norm(conv)
@@ -56,24 +60,60 @@ def stride_conv3x3(in_planes, out_planes, kernel_size, bias=True, spec_norm=Fals
 
 
 def dilated_conv3x3(in_planes, out_planes, dilation, bias=True, spec_norm=False):
-    conv = nn.Conv2d(in_planes, out_planes, kernel_size=3, padding=dilation, dilation=dilation, bias=bias)
+    conv = nn.Conv(out_planes, kernel_size=(3, 3), padding=dilation, dilation=dilation, bias=bias)
     if spec_norm:
         conv = spectral_norm(conv)
 
     return conv
 
-# Cascased Residual Blocks
+# # Cascased Residual Blocks
+# class CRPBlock(nn.Module):
+#     def __init__(self, features, n_stages, act=nn.ReLU(), maxpool=True, spec_norm=False):
+#         super().__init__()
+#         self.convs = nn.ModuleList()
+#         for i in range(n_stages):
+#             self.convs.append(conv3x3(features, features, stride=1, bias=False, spec_norm=spec_norm))
+#         self.n_stages = n_stages
+#         if maxpool:
+#             self.maxpool = nn.MaxPool2d(kernel_size=5, stride=1, padding=2)
+#         else:
+#             self.maxpool = nn.AvgPool2d(kernel_size=5, stride=1, padding=2)
+
+#         self.act = act
+
+#     def forward(self, x):
+#         x = self.act(x)
+#         path = x
+#         for i in range(self.n_stages):
+#             path = self.maxpool(path)
+#             path = self.convs[i](path)
+#             x = path + x
+#         return x
+    
 class CRPBlock(nn.Module):
-    def __init__(self, features, n_stages, act=nn.ReLU(), maxpool=True, spec_norm=False):
-        super().__init__()
+    features: int
+    n_stages: int
+    act: nn.Module
+    maxpool: bool
+    spec_norm: bool
+
+    def setup(self):
+        features = self.features
+        n_stages = self.n_stages
+        act = self.act
+        maxpool = self.maxpool
+        spec_norm = self.spec_norm
+
         self.convs = nn.ModuleList()
         for i in range(n_stages):
             self.convs.append(conv3x3(features, features, stride=1, bias=False, spec_norm=spec_norm))
         self.n_stages = n_stages
         if maxpool:
-            self.maxpool = nn.MaxPool2d(kernel_size=5, stride=1, padding=2)
+            # self.maxpool = nn.MaxPool2d(kernel_size=5, stride=1, padding=2)
+            self.pool = partial(nn.max_pool, window_shape=(5, 5), strides=(1, 1), padding='SAME')
         else:
-            self.maxpool = nn.AvgPool2d(kernel_size=5, stride=1, padding=2)
+            # self.maxpool = nn.AvgPool2d(kernel_size=5, stride=1, padding=2)
+            self.pool = partial(nn.avg_pool, window_shape=(5, 5), strides=(1, 1), padding='SAME')
 
         self.act = act
 
@@ -81,7 +121,7 @@ class CRPBlock(nn.Module):
         x = self.act(x)
         path = x
         for i in range(self.n_stages):
-            path = self.maxpool(path)
+            path = self.pool(path)
             path = self.convs[i](path)
             x = path + x
         return x
@@ -89,6 +129,7 @@ class CRPBlock(nn.Module):
 
 class CondCRPBlock(nn.Module):
     def __init__(self, features, n_stages, num_classes, normalizer, act=nn.ReLU(), spec_norm=False):
+        raise NotImplementedError('CondCRPBlock is not implemented in flax')
         super().__init__()
         self.convs = nn.ModuleList()
         self.norms = nn.ModuleList()
@@ -115,8 +156,18 @@ class CondCRPBlock(nn.Module):
 
 # Residual Convolutional Unit
 class RCUBlock(nn.Module):
-    def __init__(self, features, n_blocks, n_stages, act=nn.ReLU(), spec_norm=False):
-        super().__init__()
+
+    features: int
+    n_blocks: int
+    n_stages: int
+    act: 知道=nn.relu()
+    spec_norm: bool=False
+    def setup(self):
+        features = self.features
+        n_blocks = self.n_blocks
+        n_stages = self.n_stages
+        act = self.act
+        spec_norm = self.spec_norm
 
         for i in range(n_blocks):
             for j in range(n_stages):
@@ -124,9 +175,6 @@ class RCUBlock(nn.Module):
                                                                          spec_norm=spec_norm))
 
         self.stride = 1
-        self.n_blocks = n_blocks
-        self.n_stages = n_stages
-        self.act = act
 
     def forward(self, x):
         for i in range(self.n_blocks):
@@ -141,6 +189,7 @@ class RCUBlock(nn.Module):
 
 class CondRCUBlock(nn.Module):
     def __init__(self, features, n_blocks, n_stages, num_classes, normalizer, act=nn.ReLU(), spec_norm=False):
+        raise NotImplementedError('CondRCUBlock is not implemented in flax')
         super().__init__()
 
         for i in range(n_blocks):
@@ -166,32 +215,39 @@ class CondRCUBlock(nn.Module):
             x += residual
         return x
 
-
+list或者tuple = (list, tuple)
 # Multi-Scale Feature Block
 class MSFBlock(nn.Module):
-    def __init__(self, in_planes, features, spec_norm=False):
+    in_planes: list或者tuple
+    features: int
+    spec_norm: bool=False
+    def setup(self):
         """
         :param in_planes: tuples of input planes
         """
-        super().__init__()
+        in_planes = self.in_planes
+        features = self.features
+        spec_norm = self.spec_norm
+        
         assert isinstance(in_planes, list) or isinstance(in_planes, tuple)
-        self.convs = nn.ModuleList()
-        self.features = features
+        self.convs = []
 
         for i in range(len(in_planes)):
             self.convs.append(conv3x3(in_planes[i], features, stride=1, bias=True, spec_norm=spec_norm))
 
     def forward(self, xs, shape):
-        sums = torch.zeros(xs[0].shape[0], self.features, *shape, device=xs[0].device)
+        sums = jnp.zeros(shape=(xs[0].shape[0], self.features, *shape), device=xs[0].device)
         for i in range(len(self.convs)):
             h = self.convs[i](xs[i])
-            h = F.interpolate(h, size=shape, mode='bilinear', align_corners=True)
+            # h = F.interpolate(h, size=shape, mode='bilinear', align_corners=True)
+            h = jax.image.resize(h, shape=(xs[0].shape[0], self.features, *shape), method='bilinear')
             sums += h
         return sums
 
 
 class CondMSFBlock(nn.Module):
     def __init__(self, in_planes, features, num_classes, normalizer, spec_norm=False):
+        raise NotImplementedError('CondMSFBlock is not implemented in flax')
         """
         :param in_planes: tuples of input planes
         """
@@ -218,13 +274,27 @@ class CondMSFBlock(nn.Module):
 
 
 class RefineBlock(nn.Module):
-    def __init__(self, in_planes, features, act=nn.ReLU(), start=False, end=False, maxpool=True, spec_norm=False):
-        super().__init__()
+    in_planes: list或者tuple
+    features: int
+    act: 知道=nn.relu()
+    start: bool=False
+    end: bool=False
+    maxpool: bool=True
+    spec_norm: bool=False
+
+    def setup(self):
+        in_planes = self.in_planes
+        features = self.features
+        act = self.act
+        start = self.start
+        end = self.end
+        maxpool = self.maxpool
+        spec_norm = self.spec_norm
 
         assert isinstance(in_planes, tuple) or isinstance(in_planes, list)
         self.n_blocks = n_blocks = len(in_planes)
 
-        self.adapt_convs = nn.ModuleList()
+        self.adapt_convs = []
         for i in range(n_blocks):
             self.adapt_convs.append(
                 RCUBlock(in_planes[i], 2, 2, act, spec_norm=spec_norm)
@@ -258,6 +328,7 @@ class RefineBlock(nn.Module):
 
 class CondRefineBlock(nn.Module):
     def __init__(self, in_planes, features, num_classes, normalizer, act=nn.ReLU(), start=False, end=False, spec_norm=False):
+        raise NotImplementedError('CondRefineBlock is not implemented in flax')
         super().__init__()
 
         assert isinstance(in_planes, tuple) or isinstance(in_planes, list)
