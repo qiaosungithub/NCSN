@@ -1,42 +1,69 @@
 import flax.linen as nn
 import jax.numpy as jnp
 import zhh.F as F
-import torch
 from functools import partial
-try:
-    from NCSN.layers import *
-    from NCSN.normalization import get_normalization
-    from NCSN.utils import get_sigmas
-except:
-    from utils import get_sigmas
-    from layers import *
-    from normalization import get_normalization
+from zhh.debug import print_stat, print_tensor, set_debug
+import jax
+import optax
+import math
+import flax
 
+from zhh.models import ModuleWrapper, TorchLinear
+
+from utils import get_sigmas
+from layers import *
+from normalization import get_normalization
+
+知道=NotADirectoryError
+可能是list也可能是jnparray=知道
 
 class NCSNv2(nn.Module):
-    def __init__(self, config):
-        super().__init__()
-        self.logit_transform = config.data.logit_transform
-        self.rescaled = config.data.rescaled
-        self.norm = get_normalization(config, conditional=False) # class ConditionalInstanceNorm2dPlus(nn.Module)
-        self.ngf = ngf = config.model.ngf # number of generator features
-        self.num_classes = num_classes = config.model.num_classes
 
-        self.act = act = get_act(config) # elu
-        self.register_buffer('sigmas', get_sigmas(config))
-        self.config = config
+    norm: 知道
+    ngf: int
+    n_noise_levels: int
+    activation: 知道
+    sigmas: 可能是list也可能是jnparray
+    channels: int
+    logit_transform: bool=False
+    rescaled: bool=False
+    data_channels: int
+    
+    def setup(self):
+        norm = self.norm
+        ngf = self.ngf
+        n_noise_levels = self.n_noise_levels
+        activation = self.activation
+        sigmas = self.sigmas
+        channels = self.channels
+        logit_transform = self.logit_transform
+        rescaled = self.rescaled
+        data_channels = self.data_channels
 
-        self.begin_conv = nn.Conv2d(config.data.channels, ngf, 3, stride=1, padding=1)
+        # TODO: get norm in train.py, and get activation in train.py
+        # self.norm = get_normalization(config, conditional=False) # class InstanceNorm2dPlus(nn.Module)
 
-        self.normalizer = self.norm(ngf, self.num_classes)
-        self.end_conv = nn.Conv2d(ngf, config.data.channels, 3, stride=1, padding=1)
+        # self.act = act = get_act(config) # elu
+        # TODO: implement register buffer for sigmas
+        # self.register_buffer('sigmas', get_sigmas(config))
 
-        self.res1 = nn.ModuleList([
-            ResidualBlock(self.ngf, self.ngf, resample=None, act=act,
-                          normalization=self.norm),
-            ResidualBlock(self.ngf, self.ngf, resample=None, act=act,
-                          normalization=self.norm)]
+        self.begin_conv = nn.Conv(features=ngf, kernel_size=(3, 3), padding=1, strides=1)
+        # TODO: check the initialization of conv
+
+        self.normalizer = norm(ngf)
+        self.end_conv = nn.Conv(data_channels, kernel_size=(3, 3), padding=1, strides=1)
+
+        # self.res1 = nn.ModuleList([
+        #     ResidualBlock(self.ngf, self.ngf, resample=None, act=act,
+        #                   normalization=self.norm),
+        #     ResidualBlock(self.ngf, self.ngf, resample=None, act=act,
+        #                   normalization=self.norm)]
+        # )
+        self.res1 = nn.Sequential(
+            ResidualBlock(ngf, ngf, resample=None, act=activation, normalization=norm),
+            ResidualBlock(ngf, ngf, resample=None, act=activation, normalization=norm)
         )
+        # stop here
 
         self.res2 = nn.ModuleList([
             ResidualBlock(self.ngf, 2 * self.ngf, resample='down', act=act,
