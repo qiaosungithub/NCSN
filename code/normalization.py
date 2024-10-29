@@ -1,5 +1,5 @@
 # import torch
-import flax.linen as nn
+import flax.nnx as nn
 import jax.numpy as jnp
 import flax
 import jax
@@ -158,24 +158,32 @@ class NoneNorm2d(nn.Module):
 
 
 class InstanceNorm2dPlus(nn.Module):
+
     num_features: int
     bias: bool=True
+    rngs=None
+
     def setup(self):
         num_features = self.num_features
         bias = self.bias
+        rngs = self.rngs
         # self.instance_norm = nn.InstanceNorm2d(num_features, affine=False, track_running_stats=False)
-        self.instance_norm = nn.InstanceNorm(use_bias=False, use_scale=False, epsilon=1e-5)
+        self.instance_norm = flax.linen.InstanceNorm(use_bias=False, use_scale=False, epsilon=1e-5)
         # self.alpha = nn.Parameter(jnp.zeros(num_features))
         # self.gamma = nn.Parameter(jnp.zeros(num_features))
-        self.alpha = self.param('alpha', nn.initializers.normal(stddev=0.02), (num_features,))
-        self.gamma = self.param('gamma', nn.initializers.normal(stddev=0.02), (num_features,))
+        # self.alpha = self.param('alpha', nn.initializers.normal(stddev=0.02), (num_features,))
+        # self.gamma = self.param('gamma', nn.initializers.normal(stddev=0.02), (num_features,))
+        self.alpha = nn.Embed(num_embeddings=1, features=num_features, embedding_init=nn.initializers.normal(stddev=0.02), rngs=rngs)
+        self.gamma = nn.Embed(num_embeddings=1, features=num_features, embedding_init=nn.initializers.normal(stddev=0.02), rngs=rngs)
         # self.alpha.data.normal_(1, 0.02)
         # self.gamma.data.normal_(1, 0.02)
         if bias:
             # self.beta = nn.Parameter(jnp.zeros(num_features))
-            self.beta = self.param('beta', nn.initializers.zeros, (num_features,))
+            # self.beta = self.param('beta', nn.initializers.zeros, (num_features,))
+            self.beta = nn.Embed(num_embeddings=1, features=num_features, embedding_init=nn.initializers.zeros, rngs=rngs)
 
     def forward(self, x):
+        bs = x.shape[0]
         means = jnp.mean(x, dim=(2, 3))
         m = jnp.mean(means, dim=-1, keepdim=True)
         v = jnp.var(means, dim=-1, keepdim=True)
@@ -183,11 +191,11 @@ class InstanceNorm2dPlus(nn.Module):
         h = self.instance_norm(x)
 
         if self.bias:
-            h = h + means[..., None, None] * self.alpha[..., None, None]
-            out = self.gamma.view(-1, self.num_features, 1, 1) * h + self.beta.view(-1, self.num_features, 1, 1)
+            h = h + means[..., None, None] * self.alpha(jnp.zeros(bs,dtype=jnp.int32))[..., None, None]
+            out = self.gamma(jnp.zeros(bs,dtype=jnp.int32)).view(-1, self.num_features, 1, 1) * h + self.beta(jnp.zeros(bs,dtype=jnp.int32)).view(-1, self.num_features, 1, 1)
         else:
-            h = h + means[..., None, None] * self.alpha[..., None, None]
-            out = self.gamma.view(-1, self.num_features, 1, 1) * h
+            h = h + means[..., None, None] * self.alpha(jnp.zeros(bs,dtype=jnp.int32))[..., None, None]
+            out = self.gamma(jnp.zeros(bs,dtype=jnp.int32)).view(-1, self.num_features, 1, 1) * h
         return out
 
 

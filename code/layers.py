@@ -1,4 +1,4 @@
-import flax.linen as nn
+import flax.nnx as nn
 import flax
 import zhh.F as F
 from functools import partial
@@ -30,37 +30,39 @@ def get_act(config):
 def spectral_norm(layer, n_iters=1):
     raise NotImplementedError('spectral_norm is not implemented in flax')
 
-def conv1x1(in_planes, out_planes, stride=1, bias=True, spec_norm=False):
+def conv1x1(in_planes, out_planes, rngs, stride=1, bias=True, spec_norm=False):
     "1x1 convolution"
-    conv = nn.Conv(out_planes, kernel_size=(1, 1), stride=stride,
-                     padding=0, bias=bias)
+    conv = nn.Conv(in_planes, out_planes, kernel_size=(1, 1), strides=stride,
+                     padding='SAME', use_bias=bias, rngs=rngs)
     if spec_norm:
         conv = spectral_norm(conv)
     return conv
 
 
-def conv3x3(in_planes, out_planes, stride=1, bias=True, spec_norm=False):
+def conv3x3(in_planes, out_planes, rngs, stride=1, bias=True, spec_norm=False):
     "3x3 convolution with padding"
-    conv = nn.Conv(out_planes, kernel_size=(3, 3), stride=stride,
-                     padding=1, bias=bias)
+    conv = nn.Conv(in_planes, out_planes, kernel_size=(3, 3), strides=stride,
+                     padding='SAME', use_bias=bias, rngs=rngs)
     if spec_norm:
         conv = spectral_norm(conv)
 
     return conv
 
 
-def stride_conv3x3(in_planes, out_planes, kernel_size, bias=True, spec_norm=False):
+def stride_conv3x3(in_planes, out_planes, kernel_size, rngs, bias=True, spec_norm=False):
     if type(kernel_size) == int:
         kernel_size = (kernel_size, kernel_size)
-    conv = nn.Conv(out_planes, kernel_size=kernel_size, stride=2,
-                     padding=kernel_size // 2, bias=bias)
+        padding = (kernel_size[0] // 2, kernel_size[1] // 2)
+    conv = nn.Conv(in_planes, out_planes, kernel_size=kernel_size, strides=2,
+                     padding=padding, use_bias=bias, rngs=rngs)
     if spec_norm:
         conv = spectral_norm(conv)
     return conv
 
 
-def dilated_conv3x3(in_planes, out_planes, dilation, bias=True, spec_norm=False):
-    conv = nn.Conv(out_planes, kernel_size=(3, 3), padding=dilation, dilation=dilation, bias=bias)
+def dilated_conv3x3(in_planes, out_planes, dilation, rngs, bias=True, spec_norm=False):
+    conv = nn.Conv(in_planes, out_planes, kernel_size=(3, 3), padding=dilation, 
+                   kernel_dilation=dilation, use_bias=bias, rngs=rngs)
     if spec_norm:
         conv = spectral_norm(conv)
 
@@ -91,11 +93,13 @@ def dilated_conv3x3(in_planes, out_planes, dilation, bias=True, spec_norm=False)
 #         return x
     
 class CRPBlock(nn.Module):
+
     features: int
     n_stages: int
     act: nn.Module
     maxpool: bool
     spec_norm: bool
+    rngs=None
 
     def setup(self):
         features = self.features
@@ -103,11 +107,11 @@ class CRPBlock(nn.Module):
         act = self.act
         maxpool = self.maxpool
         spec_norm = self.spec_norm
+        rngs = self.rngs
 
-        self.convs = nn.ModuleList()
+        self.convs = []
         for i in range(n_stages):
-            self.convs.append(conv3x3(features, features, stride=1, bias=False, spec_norm=spec_norm))
-        self.n_stages = n_stages
+            self.convs.append(conv3x3(features, features, stride=1, bias=False, spec_norm=spec_norm, rngs=rngs))
         if maxpool:
             # self.maxpool = nn.MaxPool2d(kernel_size=5, stride=1, padding=2)
             self.pool = partial(nn.max_pool, window_shape=(5, 5), strides=(1, 1), padding='SAME')
@@ -162,17 +166,20 @@ class RCUBlock(nn.Module):
     n_stages: int
     act: 知道=nn.relu()
     spec_norm: bool=False
+    rngs=None
+
     def setup(self):
         features = self.features
         n_blocks = self.n_blocks
         n_stages = self.n_stages
         act = self.act
         spec_norm = self.spec_norm
+        rngs = self.rngs
 
         for i in range(n_blocks):
             for j in range(n_stages):
                 setattr(self, '{}_{}_conv'.format(i + 1, j + 1), conv3x3(features, features, stride=1, bias=False,
-                                                                         spec_norm=spec_norm))
+                                                                         spec_norm=spec_norm, rngs=rngs))
 
         self.stride = 1
 
@@ -216,11 +223,15 @@ class CondRCUBlock(nn.Module):
         return x
 
 list或者tuple = (list, tuple)
+
 # Multi-Scale Feature Block
 class MSFBlock(nn.Module):
+
     in_planes: list或者tuple
     features: int
     spec_norm: bool=False
+    rngs=None
+
     def setup(self):
         """
         :param in_planes: tuples of input planes
@@ -228,12 +239,13 @@ class MSFBlock(nn.Module):
         in_planes = self.in_planes
         features = self.features
         spec_norm = self.spec_norm
+        rngs = self.rngs
         
         assert isinstance(in_planes, list) or isinstance(in_planes, tuple)
         self.convs = []
 
         for i in range(len(in_planes)):
-            self.convs.append(conv3x3(in_planes[i], features, stride=1, bias=True, spec_norm=spec_norm))
+            self.convs.append(conv3x3(in_planes[i], features, stride=1, bias=True, spec_norm=spec_norm, rngs=rngs))
 
     def forward(self, xs, shape):
         sums = jnp.zeros(shape=(xs[0].shape[0], self.features, *shape), device=xs[0].device)
@@ -274,6 +286,7 @@ class CondMSFBlock(nn.Module):
 
 
 class RefineBlock(nn.Module):
+
     in_planes: list或者tuple
     features: int
     act: 知道=nn.relu()
@@ -281,6 +294,7 @@ class RefineBlock(nn.Module):
     end: bool=False
     maxpool: bool=True
     spec_norm: bool=False
+    rngs=None
 
     def setup(self):
         in_planes = self.in_planes
@@ -290,6 +304,7 @@ class RefineBlock(nn.Module):
         end = self.end
         maxpool = self.maxpool
         spec_norm = self.spec_norm
+        rngs = self.rngs
 
         assert isinstance(in_planes, tuple) or isinstance(in_planes, list)
         self.n_blocks = n_blocks = len(in_planes)
@@ -297,15 +312,15 @@ class RefineBlock(nn.Module):
         self.adapt_convs = []
         for i in range(n_blocks):
             self.adapt_convs.append(
-                RCUBlock(in_planes[i], 2, 2, act, spec_norm=spec_norm)
+                RCUBlock(in_planes[i], 2, 2, act, spec_norm=spec_norm, rngs=rngs)
             )
 
-        self.output_convs = RCUBlock(features, 3 if end else 1, 2, act, spec_norm=spec_norm)
+        self.output_convs = RCUBlock(features, 3 if end else 1, 2, act, spec_norm=spec_norm, rngs=rngs)
 
         if not start:
-            self.msf = MSFBlock(in_planes, features, spec_norm=spec_norm)
+            self.msf = MSFBlock(in_planes, features, spec_norm=spec_norm, rngs=rngs)
 
-        self.crp = CRPBlock(features, 2, act, maxpool=maxpool, spec_norm=spec_norm)
+        self.crp = CRPBlock(features, 2, act, maxpool=maxpool, spec_norm=spec_norm, rngs=rngs)
 
     def forward(self, xs, output_shape):
         assert isinstance(xs, tuple) or isinstance(xs, list)
@@ -365,13 +380,16 @@ class CondRefineBlock(nn.Module):
         return h
 
 int或者tuple反正是形状 = 知道
+
 class ConvMeanPool(nn.Module):
+
     input_dim: int
     output_dim: int
     kernel_size: int或者tuple反正是形状=(3, 3)
     biases: bool=True
     adjust_padding: bool=False
     spec_norm: bool=False
+    rngs=None
 
     def setup(self):
         input_dim = self.input_dim
@@ -380,12 +398,13 @@ class ConvMeanPool(nn.Module):
         biases = self.biases
         adjust_padding = self.adjust_padding
         spec_norm = self.spec_norm
+        rngs = self.rngs
 
         if type(kernel_size) == int:
             kernel_size = (kernel_size, kernel_size)
 
         # conv = nn.Conv2d(input_dim, output_dim, kernel_size, stride=1, padding=kernel_size // 2, bias=biases)
-        conv = nn.Conv(output_dim, kernel_size=kernel_size, strides=(1, 1), padding='SAME', bias=biases)
+        conv = nn.Conv(input_dim, output_dim, kernel_size=kernel_size, strides=1, padding='SAME', use_bias=biases, rngs=rngs)
         if spec_norm:
             conv = spectral_norm(conv)
         self.conv = conv
@@ -489,6 +508,7 @@ class ConditionalResidualBlock(nn.Module):
 
 
 class ResidualBlock(nn.Module):
+
     input_dim: int
     output_dim: int
     resample: bool=None
@@ -497,6 +517,7 @@ class ResidualBlock(nn.Module):
     adjust_padding: bool=False
     dilation: int=None
     spec_norm: bool=False
+    rngs=None
 
     def setup(self):
         input_dim = self.input_dim
@@ -507,38 +528,39 @@ class ResidualBlock(nn.Module):
         adjust_padding = self.adjust_padding
         dilation = self.dilation
         spec_norm = self.spec_norm
+        rngs = self.rngs
 
         if resample == 'down':
             if dilation is not None:
-                self.conv1 = dilated_conv3x3(input_dim, input_dim, dilation=dilation, spec_norm=spec_norm)
-                self.normalize2 = normalization(input_dim)
-                self.conv2 = dilated_conv3x3(input_dim, output_dim, dilation=dilation, spec_norm=spec_norm)
-                conv_shortcut = partial(dilated_conv3x3, dilation=dilation, spec_norm=spec_norm)
+                self.conv1 = dilated_conv3x3(input_dim, input_dim, dilation=dilation, spec_norm=spec_norm, rngs=rngs)
+                self.normalize2 = normalization(input_dim, rngs=rngs)
+                self.conv2 = dilated_conv3x3(input_dim, output_dim, dilation=dilation, spec_norm=spec_norm, rngs=rngs)
+                conv_shortcut = partial(dilated_conv3x3, dilation=dilation, spec_norm=spec_norm, rngs=rngs)
             else:
-                self.conv1 = conv3x3(input_dim, input_dim, spec_norm=spec_norm)
-                self.normalize2 = normalization(input_dim)
-                self.conv2 = ConvMeanPool(input_dim, output_dim, 3, adjust_padding=adjust_padding, spec_norm=spec_norm)
-                conv_shortcut = partial(ConvMeanPool, kernel_size=1, adjust_padding=adjust_padding, spec_norm=spec_norm)
+                self.conv1 = conv3x3(input_dim, input_dim, spec_norm=spec_norm, rngs=rngs)
+                self.normalize2 = normalization(input_dim, rngs=rngs)
+                self.conv2 = ConvMeanPool(input_dim, output_dim, 3, adjust_padding=adjust_padding, spec_norm=spec_norm, rngs=rngs)
+                conv_shortcut = partial(ConvMeanPool, kernel_size=1, adjust_padding=adjust_padding, spec_norm=spec_norm, rngs=rngs)
 
         elif resample is None:
             if dilation is not None:
-                conv_shortcut = partial(dilated_conv3x3, dilation=dilation, spec_norm=spec_norm)
-                self.conv1 = dilated_conv3x3(input_dim, output_dim, dilation=dilation, spec_norm=spec_norm)
-                self.normalize2 = normalization(output_dim)
-                self.conv2 = dilated_conv3x3(output_dim, output_dim, dilation=dilation, spec_norm=spec_norm)
+                conv_shortcut = partial(dilated_conv3x3, dilation=dilation, spec_norm=spec_norm, rngs=rngs)
+                self.conv1 = dilated_conv3x3(input_dim, output_dim, dilation=dilation, spec_norm=spec_norm, rngs=rngs)
+                self.normalize2 = normalization(output_dim, rngs=rngs)
+                self.conv2 = dilated_conv3x3(output_dim, output_dim, dilation=dilation, spec_norm=spec_norm, rngs=rngs)
             else:
                 # conv_shortcut = nn.Conv2d ### Something wierd here.
-                conv_shortcut = partial(conv1x1, spec_norm=spec_norm)
-                self.conv1 = conv3x3(input_dim, output_dim, spec_norm=spec_norm)
-                self.normalize2 = normalization(output_dim)
-                self.conv2 = conv3x3(output_dim, output_dim, spec_norm=spec_norm)
+                conv_shortcut = partial(conv1x1, spec_norm=spec_norm, rngs=rngs)
+                self.conv1 = conv3x3(input_dim, output_dim, spec_norm=spec_norm, rngs=rngs)
+                self.normalize2 = normalization(output_dim, rngs=rngs)
+                self.conv2 = conv3x3(output_dim, output_dim, spec_norm=spec_norm, rngs=rngs)
         else:
             raise Exception('invalid resample value')
 
         if output_dim != input_dim or resample is not None:
             self.shortcut = conv_shortcut(input_dim, output_dim)
 
-        self.normalize1 = normalization(input_dim)
+        self.normalize1 = normalization(input_dim, rngs=rngs)
 
 
     def forward(self, x):

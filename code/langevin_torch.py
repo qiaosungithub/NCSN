@@ -1,12 +1,13 @@
-import jax
+import torch
+import torchvision
 import os
 from math import sqrt
-import jax.numpy as jnp
+import numpy as np
 
-# TODO
-
+@torch.no_grad()
 def langevin(score_model, x, sigmas, eps, T, save=False, epochs=None, clamp=False, time_str=None, verbose=False):
     # it's better not to clamp
+    device = torch.device("cuda") if torch.cuda.is_available() else torch.device("cpu")
     bs = x.shape[0]
     all_samples = []
     

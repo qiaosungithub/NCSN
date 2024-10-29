@@ -1,4 +1,4 @@
-import flax.linen as nn
+import flax.nnx as nn
 import jax.numpy as jnp
 import zhh.F as F
 from functools import partial
@@ -25,26 +25,30 @@ class NCSNv2(nn.Module):
     rescaled: bool=False
     config: dict={}
     dtype: jnp.dtype = jnp.float32
+    rngs=None
     
     def setup(self):
         norm = get_normalization(self.config, conditional=False)
         ngf = self.ngf
         n_noise_levels = self.n_noise_levels
-        activation = get_act(self.config)
         logit_transform = self.logit_transform
         rescaled = self.rescaled
         config = self.config
-        self.sigmas = get_sigmas(self.config)
         data_channels = config.dataset.channels
+        rngs = self.rngs
 
+        self.activation = activation = get_act(self.config)
+        self.sigmas = get_sigmas(self.config)
         # TODO: implement register buffer for sigmas
         # self.register_buffer('sigmas', get_sigmas(config))
 
-        self.begin_conv = nn.Conv(features=ngf, kernel_size=(3, 3), padding=1, strides=1)
+        # self.begin_conv = nn.Conv(features=ngf, kernel_size=(3, 3), padding=1, strides=1)
+        self.begin_conv = nn.Conv(data_channels, ngf, kernel_size=(3, 3), padding="SAME", strides=1, rngs=rngs)
         # TODO: check the initialization of conv
 
-        self.normalizer = norm(ngf)
-        self.end_conv = nn.Conv(data_channels, kernel_size=(3, 3), padding=1, strides=1)
+        self.normalizer = norm(ngf, rngs=rngs)
+        # self.end_conv = nn.Conv(data_channels, kernel_size=(3, 3), padding=1, strides=1)
+        self.end_conv = nn.Conv(ngf, data_channels, kernel_size=(3, 3), padding="SAME", strides=1, rngs=rngs)
 
         # self.res1 = nn.ModuleList([
         #     ResidualBlock(self.ngf, self.ngf, resample=None, act=act,
@@ -53,8 +57,8 @@ class NCSNv2(nn.Module):
         #                   normalization=self.norm)]
         # )
         self.res1 = nn.Sequential(
-            ResidualBlock(ngf, ngf, resample=None, act=activation, normalization=norm),
-            ResidualBlock(ngf, ngf, resample=None, act=activation, normalization=norm)
+            ResidualBlock(ngf, ngf, resample=None, act=activation, normalization=norm, rngs=rngs),
+            ResidualBlock(ngf, ngf, resample=None, act=activation, normalization=norm, rngs=rngs)
         )
 
         # self.res2 = nn.ModuleList([
@@ -64,8 +68,8 @@ class NCSNv2(nn.Module):
         #                   normalization=self.norm)]
         # )
         self.res2 = nn.Sequential(
-            ResidualBlock(ngf, 2 * ngf, resample='down', act=activation, normalization=norm),
-            ResidualBlock(2 * ngf, 2 * ngf, resample=None, act=activation, normalization=norm)
+            ResidualBlock(ngf, 2 * ngf, resample='down', act=activation, normalization=norm, rngs=rngs),
+            ResidualBlock(2 * ngf, 2 * ngf, resample=None, act=activation, normalization=norm, rngs=rngs),
         )
 
         # self.res3 = nn.ModuleList([
@@ -76,8 +80,8 @@ class NCSNv2(nn.Module):
         # )
 
         self.res3 = nn.Sequential(
-            ResidualBlock(2 * ngf, 2 * ngf, resample='down', act=activation, normalization=norm, dilation=2),
-            ResidualBlock(2 * ngf, 2 * ngf, resample=None, act=activation, normalization=norm, dilation=2)
+            ResidualBlock(2 * ngf, 2 * ngf, resample='down', act=activation, normalization=norm, dilation=2, rngs=rngs),
+            ResidualBlock(2 * ngf, 2 * ngf, resample=None, act=activation, normalization=norm, dilation=2, rngs=rngs),
         )
 
         if config.dataset.image_size == 28:
@@ -88,8 +92,8 @@ class NCSNv2(nn.Module):
             #                   normalization=self.norm, dilation=4)]
             # )
             self.res4 = nn.Sequential(
-                ResidualBlock(2 * ngf, 2 * ngf, resample='down', act=activation, normalization=norm, adjust_padding=True, dilation=4),
-                ResidualBlock(2 * ngf, 2 * ngf, resample=None, act=activation, normalization=norm, dilation=4)
+                ResidualBlock(2 * ngf, 2 * ngf, resample='down', act=activation, normalization=norm, adjust_padding=True, dilation=4, rngs=rngs),
+                ResidualBlock(2 * ngf, 2 * ngf, resample=None, act=activation, normalization=norm, dilation=4, rngs=rngs),
             )
         else:
             # self.res4 = nn.ModuleList([
@@ -99,14 +103,14 @@ class NCSNv2(nn.Module):
             #                   normalization=self.norm, dilation=4)]
             # )
             self.res4 = nn.Sequential(
-                ResidualBlock(2 * ngf, 2 * ngf, resample='down', act=activation, normalization=norm, adjust_padding=False, dilation=4),
-                ResidualBlock(2 * ngf, 2 * ngf, resample=None, act=activation, normalization=norm, dilation=4)
+                ResidualBlock(2 * ngf, 2 * ngf, resample='down', act=activation, normalization=norm, adjust_padding=False, dilation=4, rngs=rngs),
+                ResidualBlock(2 * ngf, 2 * ngf, resample=None, act=activation, normalization=norm, dilation=4, rngs=rngs),
             )
 
-        self.refine1 = RefineBlock([2 * self.ngf], 2 * self.ngf, act=activation, start=True)
-        self.refine2 = RefineBlock([2 * self.ngf, 2 * self.ngf], 2 * self.ngf, act=activation)
-        self.refine3 = RefineBlock([2 * self.ngf, 2 * self.ngf], self.ngf, act=activation)
-        self.refine4 = RefineBlock([self.ngf, self.ngf], self.ngf, act=activation, end=True)
+        self.refine1 = RefineBlock([2 * self.ngf], 2 * self.ngf, act=activation, start=True, rngs=rngs)
+        self.refine2 = RefineBlock([2 * self.ngf, 2 * self.ngf], 2 * self.ngf, act=activation, rngs=rngs)
+        self.refine3 = RefineBlock([2 * self.ngf, 2 * self.ngf], self.ngf, act=activation, rngs=rngs)
+        self.refine4 = RefineBlock([self.ngf, self.ngf], self.ngf, act=activation, end=True, rngs=rngs)
 
     # def _compute_cond_module(self, module, x):
     #     for m in module:
