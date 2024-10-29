@@ -19,32 +19,24 @@ from normalization import get_normalization
 
 class NCSNv2(nn.Module):
 
-    norm: 知道
     ngf: int
     n_noise_levels: int
-    activation: 知道
-    sigmas: 可能是list也可能是jnparray
-    channels: int
     logit_transform: bool=False
     rescaled: bool=False
     config: dict={}
+    dtype: jnp.dtype = jnp.float32
     
     def setup(self):
-        norm = self.norm
+        norm = get_normalization(self.config, conditional=False)
         ngf = self.ngf
         n_noise_levels = self.n_noise_levels
-        activation = self.activation
-        sigmas = self.sigmas
-        channels = self.channels
+        activation = get_act(self.config)
         logit_transform = self.logit_transform
         rescaled = self.rescaled
         config = self.config
+        self.sigmas = get_sigmas(self.config)
         data_channels = config.dataset.channels
 
-        # TODO: get norm in train.py, and get activation in train.py
-        # self.norm = get_normalization(config, conditional=False) # class InstanceNorm2dPlus(nn.Module)
-
-        # self.act = act = get_act(config) # elu
         # TODO: implement register buffer for sigmas
         # self.register_buffer('sigmas', get_sigmas(config))
 
@@ -370,3 +362,13 @@ class NCSNv2Deepest(nn.Module):
         output = output / used_sigmas
 
         return output
+
+NCSNv2_base = partial(
+    NCSNv2,
+    norm=InstanceNorm2dPlus,
+    ngf=64,
+    n_noise_levels=75,
+    activation=nn.elu,
+    logit_transform=False,
+    rescaled=False,
+)

@@ -1,8 +1,8 @@
 from torchvision.datasets import MNIST, CIFAR10
 from torchvision import transforms
-import torch
-import torch.nn as nn
-import torch.nn.functional as F
+import jax.numpy as jnp
+import flax.linen as nn
+import zhh.F as F
 import os
 import numpy as np
 
@@ -177,12 +177,11 @@ def is_square(n):
     if n == 0: return True
     return n == int(n**0.5)**2
 
-def hello():
-    print('Good luck!')
-
 def get_sigmas(config):
-    sigmas = torch.tensor(
-        np.exp(np.linspace(np.log(config.model.sigma_begin), np.log(config.model.sigma_end),
-                            config.model.num_classes))).float().cuda()
+    sigmas = jnp.array(
+        np.exp(np.linspace(np.log(config.sigma_begin), np.log(config.sigma_end),
+                            config.n_noise_levels))).astype(jnp.float32)
+    if config.half_precision:
+        sigmas = sigmas.astype(jnp.bfloat16)
 
     return sigmas

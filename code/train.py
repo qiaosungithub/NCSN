@@ -27,12 +27,13 @@ import ncsnv2
 
 import kaiming_utils.writer_util as writer_util  # must be after 'from clu import metric_writers'
 from kaiming_utils.info_util import print_params
+from utils import get_sigmas
 
 
 NUM_CLASSES = 1000
 
 
-def create_model(*, model_cls, half_precision, **kwargs):
+def create_model(*, model_cls, half_precision, config, **kwargs):
   platform = jax.local_devices()[0].platform
   if half_precision:
     if platform == 'tpu':
@@ -41,7 +42,12 @@ def create_model(*, model_cls, half_precision, **kwargs):
       model_dtype = jnp.float16
   else:
     model_dtype = jnp.float32
-  return model_cls(num_classes=NUM_CLASSES, dtype=model_dtype, **kwargs)
+  return model_cls(
+    dtype=model_dtype, 
+    ngf=config.ngf, 
+    n_noise_levels=config.n_noise_levels,
+    config=config,
+    **kwargs)
 
 
 def initialized(key, image_size, model):
@@ -208,70 +214,49 @@ def create_learning_rate_fn(
 
 #   return new_state, metrics
 
-def train_step_sqa(state, batch, rng_init, learning_rate_fn,label_smoothing=0.1):
+def train_step_sqa(state, batch, rng_init, sigmas):
   """Perform a single training step."""
 
   # ResNet has no dropout; but maintain rng_dropout for future usage
   rng_step = random.fold_in(rng_init, state.step)
   rng_device = random.fold_in(rng_step, lax.axis_index(axis_name='batch'))
-  rng_dropout, _ = random.split(rng_device)
+  rng, _ = random.split(rng_device)
 
-  def categorical_cross_entropy_loss(logits, labels,label_smoothing=label_smoothing):
-    """计算分类交叉熵损失"""
-    # one_hot_labels = common_utils.onehot(labels, num_classes=NUM_CLASSES)
-    # xentropy = optax.softmax_cross_entropy(logits=logits, labels=labels)
-    # return jnp.mean(xentropy)
-    return cross_entropy_loss(logits, labels,label_smoothing=label_smoothing)
+  images = batch['image']
+
+  sigma_indices = random.randint(rng, (batch['image'].shape[0],), 0, len(sigmas))
+  sigma_batch = sigmas[sigma_indices].reshape(-1, 1, 1, 1)
+
+  noise = random.normal(rng, images.shape) * sigma_batch
+  images_noise = images + noise
+  target = - noise / sigma_batch
 
   def loss_fn(params):
     """loss function used for training."""
-    logits, new_model_state = state.apply_fn(
+    outputs, new_model_state = state.apply_fn(
       {'params': params, 'batch_stats': state.batch_stats},
-      batch['image'],
+      images_noise,
+      sigma_indices,
       mutable=['batch_stats'],
-      # rngs=dict(dropout=rng_dropout),
-      rng=rng_dropout,
+      rng=rng,
     )
-    loss = categorical_cross_entropy_loss(logits, batch['label'])
-    return loss, (new_model_state, logits)
+    outputs = outputs * sigma_batch
+    loss = jnp.mean((outputs - target)**2)
+    return loss, (new_model_state, outputs)
 
-  step = state.step
-  dynamic_scale = state.dynamic_scale
-  lr = learning_rate_fn(step)
-
-  if dynamic_scale:
-    grad_fn = dynamic_scale.value_and_grad(
-      loss_fn, has_aux=True, axis_name='batch'
-    )
-    dynamic_scale, is_fin, aux, grads = grad_fn(state.params)
-    # dynamic loss takes care of averaging gradients across replicas
-  else:
-    grad_fn = jax.value_and_grad(loss_fn, has_aux=True)
-    aux, grads = grad_fn(state.params)
-    # Re-use same axis_name as in the call to `pmap(...train_step...)` below.
-    grads = lax.pmean(grads, axis_name='batch')
+  grad_fn = jax.value_and_grad(loss_fn, has_aux=True)
+  aux, grads = grad_fn(state.params)
+  # Re-use same axis_name as in the call to `pmap(...train_step...)` below.
+  grads = lax.pmean(grads, axis_name='batch')
   new_model_state, logits = aux[1]
-  metrics = compute_metrics(logits, batch['label'])
-  metrics['lr'] = lr
+  loss = aux[0]
+  loss = lax.pmean(loss, axis_name='batch')
+  # TODO: implement ema
+  metrics = {"loss": loss}
 
   new_state = state.apply_gradients(
     grads=grads, batch_stats=new_model_state['batch_stats']
   )
-  if dynamic_scale:
-    # if is_fin == False the gradients contain Inf/NaNs and optimizer state and
-    # params should be restored (= skip this step).
-    new_state = new_state.replace(
-      opt_state=jax.tree_util.tree_map(
-        functools.partial(jnp.where, is_fin),
-        new_state.opt_state,
-        state.opt_state,
-      ),
-      params=jax.tree_util.tree_map(
-        functools.partial(jnp.where, is_fin), new_state.params, state.params
-      ),
-      dynamic_scale=dynamic_scale,
-    )
-    metrics['scale'] = dynamic_scale.scale
 
   return new_state, metrics
 
@@ -322,10 +307,6 @@ def create_train_state(
 
   dynamic_scale = None
   platform = jax.local_devices()[0].platform
-  if config.half_precision and platform == 'gpu':
-    dynamic_scale = dynamic_scale_lib.DynamicScale()
-  else:
-    dynamic_scale = None
 
   params, batch_stats = initialized(rng, image_size, model)
   
@@ -333,28 +314,36 @@ def create_train_state(
 
   # here is the optimizer
 
-  if config.optimizer == 'sgd':
-    if config.weight_decay != 0.0:
-      print("Warning from sqa: weight decay is not supported in SGD")
-    if config.grad_norm_clip != "None":
-      print("Warning from sqa: grad norm clipping is not supported in SGD")
-    tx = optax.sgd(
-      learning_rate=learning_rate_fn,
-      momentum=config.momentum,
-      nesterov=True,
-    )
-  elif config.optimizer == 'adamw':
-    grad_norm_clip = None if config.grad_norm_clip == "None" else config.grad_norm_clip
-    tx = optax.adamw(
-      learning_rate=learning_rate_fn,
-      b1=0.9,
-      b2=0.999,
-      eps=1e-8,
-      weight_decay=config.weight_decay,
-      # grad_norm_clip=grad_norm_clip, # None if no clipping
-    )
-  else:
-    raise ValueError(f'Unknown optimizer: {config.optimizer}, choose from "sgd" or "adamw"')
+  # if config.optimizer == 'sgd':
+  #   if config.weight_decay != 0.0:
+  #     print("Warning from sqa: weight decay is not supported in SGD")
+  #   if config.grad_norm_clip != "None":
+  #     print("Warning from sqa: grad norm clipping is not supported in SGD")
+  #   tx = optax.sgd(
+  #     learning_rate=learning_rate_fn,
+  #     momentum=config.momentum,
+  #     nesterov=True,
+  #   )
+  # elif config.optimizer == 'adamw':
+  #   grad_norm_clip = None if config.grad_norm_clip == "None" else config.grad_norm_clip
+  #   tx = optax.adamw(
+  #     learning_rate=learning_rate_fn,
+  #     b1=0.9,
+  #     b2=0.999,
+  #     eps=1e-8,
+  #     weight_decay=config.weight_decay,
+  #     # grad_norm_clip=grad_norm_clip, # None if no clipping
+  #   )
+  # else:
+  #   raise ValueError(f'Unknown optimizer: {config.optimizer}, choose from "sgd" or "adamw"')
+  # use adamw optimizer
+  tx = optax.adamw(
+    learning_rate=learning_rate_fn,
+    b1=0.9,
+    b2=0.999,
+    eps=1e-8,
+    weight_decay=config.weight_decay,
+  )
   state = TrainState.create(
     apply_fn=model.apply,
     params=params,
@@ -412,14 +401,14 @@ def train_and_evaluate(
   base_learning_rate = config.learning_rate
 
   model_cls = getattr(ncsnv2, config.model)
-  # 改到这里
+  
   model = create_model(
     model_cls=model_cls, half_precision=config.half_precision,
-    dropout_rate=config.dropout_rate,
-    stochastic_depth_rate=config.stochastic_depth_rate,
+    config=config
   )
 
-  learning_rate_fn = create_learning_rate_fn(config, base_learning_rate, steps_per_epoch)
+  # learning_rate_fn = create_learning_rate_fn(config, base_learning_rate, steps_per_epoch)
+  learning_rate_fn = config.learning_rate
 
   state = create_train_state(rng, config, model, image_size, learning_rate_fn)
   state = restore_checkpoint(state, workdir)
@@ -431,10 +420,7 @@ def train_and_evaluate(
   # reload checkpoint done
 
   # use pmap to parallel training
-  # p_train_step = jax.pmap(
-  #     functools.partial(train_step, rng_init=rng, learning_rate_fn=learning_rate_fn),
-  #     axis_name='batch',
-  # )
+  # 停在这里
   p_train_step = jax.pmap(
     functools.partial(train_step_sqa, rng_init=rng, learning_rate_fn=learning_rate_fn, label_smoothing=0.0),
     axis_name='batch',

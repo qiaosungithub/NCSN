@@ -55,6 +55,7 @@ def get_config():
   config.eval_batch_size = 500
   config.shuffle_buffer_size = 16 * 128
   config.prefetch = 10
+  config.weight_decay = 0.0 
 
   config.num_epochs = 100
   config.log_per_step = 100

@@ -13,14 +13,14 @@ from normalization import *
 def get_act(config):
     # TODO: unmodified
     if config.model.nonlinearity.lower() == 'elu':
-        return nn.ELU()
+        return nn.elu
     elif config.model.nonlinearity.lower() == 'relu':
-        return nn.ReLU()
+        return nn.relu
     elif config.model.nonlinearity.lower() == 'lrelu':
-        return nn.LeakyReLU(negative_slope=0.2)
+        return partial(nn.leaky_relu, negative_slope=0.2)
     elif config.model.nonlinearity.lower() == 'swish':
         def swish(x):
-            return x * torch.sigmoid(x)
+            return x * nn.sigmoid(x)
         return swish
     else:
         raise NotImplementedError('activation function does not exist!')
