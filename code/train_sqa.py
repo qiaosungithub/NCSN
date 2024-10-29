@@ -4,7 +4,7 @@ try:
     from NCSN.langevin import *
     from NCSN.ema import EMAHelper
 except:
-    from utils import *
+    from utils.utils import *
     from model_sqa import *
     from langevin import *
     from ema import EMAHelper

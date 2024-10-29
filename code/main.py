@@ -8,8 +8,8 @@ from clu import platform
 import jax
 from ml_collections import config_flags
 
-import code.train_sqa as train_sqa
-from utils import logging_util
+import train_sqa
+from utils.utils import logging_util
 
 import warnings
 warnings.filterwarnings("ignore")

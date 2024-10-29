@@ -10,7 +10,7 @@ import flax
 
 from zhh.models import ModuleWrapper, TorchLinear
 
-from utils import get_sigmas
+from utils.utils import get_sigmas
 from layers import *
 from normalization import get_normalization
 

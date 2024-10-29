@@ -8,7 +8,7 @@ try:
     from NCSN.normalization import get_normalization
     from NCSN.utils import get_sigmas
 except:
-    from utils import get_sigmas
+    from utils.utils import get_sigmas
     from layers import *
     from normalization import get_normalization
 
