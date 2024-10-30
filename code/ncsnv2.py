@@ -28,7 +28,7 @@ class NCSNv2(nn.Module):
     rngs=None
     
     def setup(self):
-        norm = get_normalization(self.config, conditional=False)
+        norm = get_normalization(self.config.model, conditional=False)
         ngf = self.ngf
         n_noise_levels = self.n_noise_levels
         logit_transform = self.logit_transform
@@ -37,8 +37,8 @@ class NCSNv2(nn.Module):
         data_channels = config.dataset.channels
         rngs = self.rngs
 
-        self.activation = activation = get_act(self.config)
-        self.sigmas = get_sigmas(self.config)
+        self.activation = activation = get_act(self.config.model)
+        self.sigmas = get_sigmas(self.config.sampling)
         # TODO: implement register buffer for sigmas
         # self.register_buffer('sigmas', get_sigmas(config))
 

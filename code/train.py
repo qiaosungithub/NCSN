@@ -96,6 +96,7 @@ def create_learning_rate_fn(
   first warmup (increase to base_learning_rate) for config.warmup_epochs
   then cosine decay to 0 for the rest of the epochs
   """
+  raise NotImplementedError("This function is not used in the current implementation")
 
   warmup_lr = 1e-6
   warmup_epochs = config.warmup_epochs

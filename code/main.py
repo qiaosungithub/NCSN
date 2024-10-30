@@ -29,7 +29,7 @@ import jax
 from ml_collections import config_flags
 
 import train
-from utils.utils import logging_util
+from utils import logging_util
 logging_util.supress_checkpt_info()
 
 import warnings

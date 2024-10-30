@@ -4,19 +4,41 @@
 # This source code is licensed under the license found in the
 # LICENSE file in the root directory of this source tree.
 
-import logging as _logging
 from absl import logging
+import logging as sys_logging
 
 import jax
-from jax.experimental import multihost_utils
 
-from termcolor import colored
 import time
 
 
 def log_for_0(*args):
     if jax.process_index() == 0:
         logging.info(*args)
+
+class ExcludeInfo(sys_logging.Filter):
+    def __init__(self, exclude_files):
+        super().__init__()
+        self.exclude_files = exclude_files
+
+    def filter(self, record):
+        # print('zhh ijijijijiji',record.pathname)
+        if any(file_name in record.pathname for file_name in self.exclude_files):
+            return record.levelno > sys_logging.INFO
+        return True
+
+exclude_files = [
+    'orbax/checkpoint/async_checkpointer.py',
+    'orbax/checkpoint/multihost/utils.py',
+    'orbax/checkpoint/future.py',
+    'orbax/checkpoint/_src/handlers/base_pytree_checkpoint_handler.py',
+    'orbax/checkpoint/type_handlers.py',
+    'orbax/checkpoint/metadata/checkpoint.py'
+]
+file_filter = ExcludeInfo(exclude_files)
+
+def supress_checkpt_info():
+    logging.get_absl_handler().addFilter(file_filter)
 
 class Timer:
     def __init__(self):

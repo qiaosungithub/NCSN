@@ -70,7 +70,7 @@ def dilated_conv3x3(in_planes, out_planes, dilation, rngs, bias=True, spec_norm=
 
 # # Cascased Residual Blocks
 # class CRPBlock(nn.Module):
-#     def __init__(self, features, n_stages, act=nn.ReLU(), maxpool=True, spec_norm=False):
+#     def __init__(self, features, n_stages, act=nn.relu, maxpool=True, spec_norm=False):
 #         super().__init__()
 #         self.convs = nn.ModuleList()
 #         for i in range(n_stages):
@@ -131,31 +131,31 @@ class CRPBlock(nn.Module):
         return x
 
 
-class CondCRPBlock(nn.Module):
-    def __init__(self, features, n_stages, num_classes, normalizer, act=nn.ReLU(), spec_norm=False):
-        raise NotImplementedError('CondCRPBlock is not implemented in flax')
-        super().__init__()
-        self.convs = nn.ModuleList()
-        self.norms = nn.ModuleList()
-        self.normalizer = normalizer
-        for i in range(n_stages):
-            self.norms.append(normalizer(features, num_classes, bias=True))
-            self.convs.append(conv3x3(features, features, stride=1, bias=False, spec_norm=spec_norm))
+# class CondCRPBlock(nn.Module):
+#     def __init__(self, features, n_stages, num_classes, normalizer, act=nn.relu, spec_norm=False):
+#         raise NotImplementedError('CondCRPBlock is not implemented in flax')
+#         super().__init__()
+#         self.convs = nn.ModuleList()
+#         self.norms = nn.ModuleList()
+#         self.normalizer = normalizer
+#         for i in range(n_stages):
+#             self.norms.append(normalizer(features, num_classes, bias=True))
+#             self.convs.append(conv3x3(features, features, stride=1, bias=False, spec_norm=spec_norm))
 
-        self.n_stages = n_stages
-        self.maxpool = nn.AvgPool2d(kernel_size=5, stride=1, padding=2)
-        self.act = act
+#         self.n_stages = n_stages
+#         self.maxpool = nn.AvgPool2d(kernel_size=5, stride=1, padding=2)
+#         self.act = act
 
-    def forward(self, x, y):
-        x = self.act(x)
-        path = x
-        for i in range(self.n_stages):
-            path = self.norms[i](path, y)
-            path = self.maxpool(path)
-            path = self.convs[i](path)
+#     def forward(self, x, y):
+#         x = self.act(x)
+#         path = x
+#         for i in range(self.n_stages):
+#             path = self.norms[i](path, y)
+#             path = self.maxpool(path)
+#             path = self.convs[i](path)
 
-            x = path + x
-        return x
+#             x = path + x
+#         return x
 
 
 # Residual Convolutional Unit
@@ -164,7 +164,7 @@ class RCUBlock(nn.Module):
     features: int
     n_blocks: int
     n_stages: int
-    act: 知道=nn.relu()
+    act: 知道=nn.relu
     spec_norm: bool=False
     rngs=None
 
@@ -195,7 +195,7 @@ class RCUBlock(nn.Module):
 
 
 class CondRCUBlock(nn.Module):
-    def __init__(self, features, n_blocks, n_stages, num_classes, normalizer, act=nn.ReLU(), spec_norm=False):
+    def __init__(self, features, n_blocks, n_stages, num_classes, normalizer, act=nn.relu, spec_norm=False):
         raise NotImplementedError('CondRCUBlock is not implemented in flax')
         super().__init__()
 
@@ -289,7 +289,7 @@ class RefineBlock(nn.Module):
 
     in_planes: list或者tuple
     features: int
-    act: 知道=nn.relu()
+    act: 知道=nn.relu
     start: bool=False
     end: bool=False
     maxpool: bool=True
@@ -342,7 +342,7 @@ class RefineBlock(nn.Module):
 
 
 class CondRefineBlock(nn.Module):
-    def __init__(self, in_planes, features, num_classes, normalizer, act=nn.ReLU(), start=False, end=False, spec_norm=False):
+    def __init__(self, in_planes, features, num_classes, normalizer, act=nn.relu, start=False, end=False, spec_norm=False):
         raise NotImplementedError('CondRefineBlock is not implemented in flax')
         super().__init__()
 
@@ -450,7 +450,7 @@ class UpsampleConv(nn.Module):
 
 
 class ConditionalResidualBlock(nn.Module):
-    def __init__(self, input_dim, output_dim, num_classes, resample=None, act=nn.ELU(),
+    def __init__(self, input_dim, output_dim, num_classes, resample=None, act=nn.elu,
                  normalization=ConditionalBatchNorm2d, adjust_padding=False, dilation=None, spec_norm=False):
         raise NotImplementedError('ConditionalResidualBlock is not implemented in flax')
         super().__init__()
@@ -512,8 +512,8 @@ class ResidualBlock(nn.Module):
     input_dim: int
     output_dim: int
     resample: bool=None
-    act: 知道=nn.elu()
-    normalization: 知道=nn.BatchNorm2d
+    act: 知道=nn.elu
+    normalization: 知道=nn.BatchNorm
     adjust_padding: bool=False
     dilation: int=None
     spec_norm: bool=False
