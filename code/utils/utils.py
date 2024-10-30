@@ -102,7 +102,7 @@ transform = transforms.Compose([
 #     train=True,
 # )
 
-train_set = partial(
+train_set_ = partial(
     MNIST,
     download=True,
     transform=transform,
@@ -116,7 +116,7 @@ train_set = partial(
 #     train=False,
 # )
 
-val_set = partial(
+val_set_ = partial(
     MNIST,
     download=True,
     transform=transform,
@@ -213,8 +213,8 @@ def get_sigmas(config):
     sigmas = jnp.array(
         np.exp(np.linspace(np.log(config.sigma_begin), np.log(config.sigma_end),
                             config.n_noise_levels))).astype(jnp.float32)
-    if config.half_precision:
-        sigmas = sigmas.astype(jnp.bfloat16)
+    # if config.half_precision:
+    #     sigmas = sigmas.astype(jnp.bfloat16)
 
     return sigmas
 

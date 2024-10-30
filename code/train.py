@@ -25,7 +25,7 @@ from utils.logging_util import log_for_0, Timer
 from flax import jax_utils as ju
 from utils.metric_utils import tang_reduce, MyMetrics, Avger
 from torch.utils.data import DataLoader
-from utils.utils import train_set, val_set
+from utils.utils import train_set_, val_set_
 import ncsnv2
 
 from utils.display_utils import display_model
@@ -45,6 +45,7 @@ class NNXTrainState(FlaxTrainState):
   batch_stats: Any
   rng_states: Any
   graphdef: Any
+  useless_variable_state: Any
   # NOTE: is_training can't be a attr, since it can't be replicated
 
 def global_seed(seed):
@@ -122,7 +123,7 @@ def create_learning_rate_fn(
       
   return lr_schedule
 
-def train_step_sqa(state:NNXTrainState, batch, rng_init, sigmas):
+def train_step_sqa(state:NNXTrainState, images, rng_init, sigmas):
   """Perform a single training step."""
 
   # ResNet has no dropout; but maintain rng_dropout for future usage
@@ -130,9 +131,7 @@ def train_step_sqa(state:NNXTrainState, batch, rng_init, sigmas):
   rng_device = random.fold_in(rng_step, lax.axis_index(axis_name='batch'))
   rng, _ = random.split(rng_device)
 
-  images = batch['image']
-
-  sigma_indices = random.randint(rng, (batch['image'].shape[0],), 0, len(sigmas))
+  sigma_indices = random.randint(rng, (images.shape[0],), 0, len(sigmas))
   sigma_batch = sigmas[sigma_indices].reshape(-1, 1, 1, 1)
 
   noise = random.normal(rng, images.shape) * sigma_batch
@@ -142,7 +141,7 @@ def train_step_sqa(state:NNXTrainState, batch, rng_init, sigmas):
   def loss_fn(params):
     """loss function used for training."""
     outputs, new_batch_stats, new_rng_params = state.apply_fn(
-      state.graphdef, params, state.rng_states, state.batch_stats, True, images_noise)
+      state.graphdef, params, state.rng_states, state.batch_stats, state.useless_variable_state, True, images_noise, sigma_indices)
     outputs = outputs * sigma_batch
     loss = jnp.mean((outputs - target)**2)
     return loss, (outputs, new_batch_stats, new_rng_params)
@@ -318,16 +317,16 @@ def create_train_state(
   config: the training config
   """
   # print("here we are in the function 'create_train_state' in train.py; ready to define optimizer")
-  graphdef, params, batch_stats, rng_states = nn.split(model, nn.Param, nn.BatchStat, nn.RngState)
+  graphdef, params, batch_stats, rng_states, sigmas = nn.split(model, nn.Param, nn.BatchStat, nn.RngState, nn.VariableState)
 
-  def apply_fn(graphdef2, params2, rng_states2, batch_stats2, is_training, x):
-    merged_model = nn.merge(graphdef2, params2, rng_states2, batch_stats2)
+  def apply_fn(graphdef2, params2, rng_states2, batch_stats2, useless_, is_training, x, noise_index):
+    merged_model = nn.merge(graphdef2, params2, rng_states2, batch_stats2, useless_)
     if is_training:
       merged_model.train()
     else:
       merged_model.eval()
-    del params2, rng_states2, batch_stats2
-    out = merged_model(x)
+    del params2, rng_states2, batch_stats2, useless_
+    out = merged_model(x, noise_index)
     new_batch_stats, new_rng_states, _ = nn.state(merged_model, nn.BatchStat, nn.RngState, ...)
     return out, new_batch_stats, new_rng_states
 
@@ -369,6 +368,7 @@ def create_train_state(
     params=params,
     tx=tx,
     batch_stats=batch_stats,
+    useless_variable_state=sigmas,
     rng_states=rng_states,
   )
   return state
@@ -419,8 +419,8 @@ def train_and_evaluate(
   if local_batch_size % jax.local_device_count() > 0:
     raise ValueError('Local batch size must be divisible by the number of local devices')
 
-  train_set = train_set(root=dataset_config.root)
-  val_set = val_set(root=dataset_config.root)
+  train_set = train_set_(root=dataset_config.root)
+  val_set = val_set_(root=dataset_config.root)
 
   train_loader, steps_per_epoch = create_split(
     train_set, local_batch_size, 'train', dataset_config
@@ -448,12 +448,11 @@ def train_and_evaluate(
   #   model_cls=model_cls, half_precision=config.half_precision,
   #   config=config
   # )
-  ######### 我不会!!!!!!!!!!!!!!!改到这里
   model_init_fn = partial(
     model_cls, 
     dtype=dtype, 
-    ngf=config.ngf, 
-    n_noise_levels=config.n_noise_levels, 
+    ngf=model_config.ngf, 
+    n_noise_levels=sampling_config.n_noise_levels, 
     config=config
   )
   model = model_init_fn(rngs=rngs)
@@ -461,28 +460,28 @@ def train_and_evaluate(
 
   ########### Create LR FN ###########
   # learning_rate_fn = create_learning_rate_fn(config, base_learning_rate, steps_per_epoch)
-  learning_rate_fn = config.learning_rate
+  learning_rate_fn = training_config.learning_rate
 
   ########### Create Train State ###########
   state = create_train_state(rng, training_config, model, image_size, learning_rate_fn)
   # restore checkpoint
-  if config.load_from is not None:
-    if not os.path.isabs(config.load_from):
+  if training_config.load_from is not None:
+    if not os.path.isabs(training_config.load_from):
       raise ValueError('Checkpoint path must be absolute')
-    if not os.path.exists(config.load_from):
-      raise ValueError('Checkpoint path {} does not exist'.format(config.load_from))
-    state = restore_checkpoint(model_init_fn ,state, config.load_from)
+    if not os.path.exists(training_config.load_from):
+      raise ValueError('Checkpoint path {} does not exist'.format(training_config.load_from))
+    state = restore_checkpoint(model_init_fn ,state, training_config.load_from)
     # sanity check, as in Kaiming's code
     assert state.step > 0 and state.step % steps_per_epoch == 0, ValueError('Got an invalid checkpoint with step {}'.format(state.step))
   epoch_offset = state.step // steps_per_epoch  # sanity check for resuming
 
   state = ju.replicate(state) # NOTE: this doesn't split the RNGs automatically, but it is an intended behavior
   model_avg = state.params
-  yierbayiyiliuqi = len(train_loader.dataset) # this equals to ??
-  print("yierbayiyiliuqi: ", yierbayiyiliuqi)
+  yierbayiyiliuqi = len(train_loader.dataset) # this equals to 60000
+  # print("yierbayiyiliuqi: ", yierbayiyiliuqi)
 
   # use pmap to parallel training
-  sigmas = get_sigmas(config)
+  sigmas = get_sigmas(sampling_config)
   p_train_step = jax.pmap(
     functools.partial(train_step_sqa, rng_init=rng, sigmas=sigmas),
     axis_name='batch',
@@ -524,7 +523,7 @@ def train_and_evaluate(
       merged_params = loaded_state['mo_xing']
       opt_state = loaded_state['you_hua_qi']
       step = loaded_state['step']
-      params, batch_stats = merged_params.split(nn.Param, nn.BatchStat)
+      params, batch_stats = merged_params.split(nn.Param, nn.BatchStat, nn.VariableState)
       return state.replace(
           params=params,
           rng_states=rng_states,
@@ -537,12 +536,12 @@ def train_and_evaluate(
   log_for_0('Initial compilation, this might take some minutes...')
 
   last_model = None
-  if config.get('ema_decay'):
-    assert config.ema_decay > 0.0 and config.ema_decay < 1.0, 'ema_decay should be in (0, 1)'
-    log_for_0('Using EMA with decay {}'.format(config.ema_decay))
-    p_update_model_avg = jax.pmap(partial(_update_model_avg, ema_decay=config.ema_decay), axis_name='batch')
+  if sampling_config.get('ema_decay'):
+    assert sampling_config.ema_decay > 0.0 and sampling_config.ema_decay < 1.0, 'ema_decay should be in (0, 1)'
+    log_for_0('Using EMA with decay {}'.format(sampling_config.ema_decay))
+    p_update_model_avg = jax.pmap(partial(_update_model_avg, ema_decay=sampling_config.ema_decay), axis_name='batch')
 
-  for epoch in range(epoch_offset, config.num_epochs):
+  for epoch in range(epoch_offset, training_config.num_epochs):
     ########### Train ###########
     timer = Timer()
     if jax.process_count() > 1:
@@ -553,8 +552,8 @@ def train_and_evaluate(
 
       images = batch[0].reshape(-1, config.dataset.channels, config.dataset.image_size, config.dataset.image_size)
       step = epoch * steps_per_epoch + n_batch
-      ep = step * config.batch_size / yierbayiyiliuqi
-      print("images.shape: ", images.shape)
+      ep = step * training_config.batch_size / yierbayiyiliuqi
+      # print("images.shape: ", images.shape)
       images = prepare_batch_data_sqa(images)
 
       # print("batch['image'].shape:", batch['image'].shape)
@@ -588,16 +587,16 @@ def train_and_evaluate(
 
       # print(batch["image"].shape)
 
-      state, metrics = p_train_step(state, batch) # here is the training step
+      state, metrics = p_train_step(state, images) # here is the training step
       
       if epoch == epoch_offset and n_batch == 0:
         log_for_0('Initial compilation completed. Reset timer.')
 
-      if config.get('log_per_step'):
-        if (step + 1) % config.log_per_step == 0:
+      if training_config.get('log_per_step'):
+        if (step + 1) % training_config.log_per_step == 0:
           if index == 0:
             tang_reduce(metrics) 
-            step_per_sec = config.log_per_step / timer.elapse_with_reset()
+            step_per_sec = training_config.log_per_step / timer.elapse_with_reset()
             loss_to_display = metrics['loss']
             if training_config.wandb:
               wandb.log({'train_ep:': ep, 
@@ -606,7 +605,7 @@ def train_and_evaluate(
                         'step': step, 
                         'step_per_sec': step_per_sec})
             log_for_0('epoch: {} step: {} loss: {}, step_per_sec: {}'.format(ep, step, loss_to_display, step_per_sec))
-      if config.get('ema_decay'):
+      if sampling_config.get('ema_decay'):
         # EMA
         model_avg = p_update_model_avg(model_avg, state.params)
 
@@ -614,14 +613,14 @@ def train_and_evaluate(
     # we first save checkpoint, then do eval. Reasons: 1. if eval emits an error, then we still have our model; 2. avoid the program exits before the checkpointer finishes its job.
     # NOTE: when saving checkpoint, should sync batch stats first.
     state = sync_batch_stats(state)
-    if (epoch + 1) % config.checkpoint_per_epoch == 0:
+    if (epoch + 1) % training_config.checkpoint_per_epoch == 0:
         # if index == 0:
         save_checkpoint(state, workdir)
-    if epoch == config.num_epochs - 1:
+    if epoch == training_config.num_epochs - 1:
       state = state.replace(params=model_avg)
 
     ########### Eval ###########
-    if (epoch + 1) % config.eval_per_epoch == 0:
+    if (epoch + 1) % training_config.eval_per_epoch == 0:
       log_for_0('Eval epoch {}...'.format(epoch))
       # sync batch statistics across replicas
       state = sync_batch_stats(state)

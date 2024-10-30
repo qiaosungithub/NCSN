@@ -6,8 +6,10 @@ import jax
 
 
 def get_normalization(config, conditional=True):
-    # TODO: change the API
-    norm = config.model.normalization
+    """
+    config: the model config
+    """
+    norm = config.normalization
     if conditional:
         if norm == 'NoneNorm':
             return ConditionalNoneNorm2d
@@ -156,19 +158,31 @@ class NoneNorm2d(nn.Module):
     def forward(self, x):
         return x
 
+# class InstanceNorm2d(nn.Module):
+#     """
+#     Instance Normalization: norm on the h, w dim
+#     """
+#     def __init__(self, use_bias=False, use_scale=False, epsilon=1e-5):
+#         super().__init__()
+#         assert not use_bias and not use_scale, "InstanceNorm2d does not support bias and scale parameters"
+#         self.eps = epsilon
+#     def __call__(self, x):
+#         mean = jnp.mean(x, axis=(2, 3), keepdims=True)
+#         var = jnp.var(x, axis=(2, 3), keepdims=True)
+#         x = (x - mean) / jnp.sqrt(var + self.eps)
+#         return x
 
 class InstanceNorm2dPlus(nn.Module):
-
-    num_features: int
-    bias: bool=True
-    rngs=None
-
-    def setup(self):
-        num_features = self.num_features
-        bias = self.bias
-        rngs = self.rngs
+    def __init__(self,
+        num_features: int,
+        bias: bool=True,
+        rngs=None
+    ):
+        self.num_features = num_features
+        self.bias = bias
+        self.rngs = rngs
         # self.instance_norm = nn.InstanceNorm2d(num_features, affine=False, track_running_stats=False)
-        self.instance_norm = flax.linen.InstanceNorm(use_bias=False, use_scale=False, epsilon=1e-5)
+        # self.instance_norm = flax.linen.InstanceNorm(use_bias=False, use_scale=False, epsilon=1e-5)
         # self.alpha = nn.Parameter(jnp.zeros(num_features))
         # self.gamma = nn.Parameter(jnp.zeros(num_features))
         # self.alpha = self.param('alpha', nn.initializers.normal(stddev=0.02), (num_features,))
@@ -182,20 +196,28 @@ class InstanceNorm2dPlus(nn.Module):
             # self.beta = self.param('beta', nn.initializers.zeros, (num_features,))
             self.beta = nn.Embed(num_embeddings=1, features=num_features, embedding_init=nn.initializers.zeros, rngs=rngs)
 
-    def forward(self, x):
-        bs = x.shape[0]
-        means = jnp.mean(x, dim=(2, 3))
-        m = jnp.mean(means, dim=-1, keepdim=True)
-        v = jnp.var(means, dim=-1, keepdim=True)
+    def __call__(self, x):
+        bs = x.shape[0] # here the image has shape (bs, h, w, c) in jnp style
+        # print("x.shape", x.shape, flush=True)
+        x = x.transpose((0, 3, 1, 2)) # (bs, c, h, w)
+        means = jnp.mean(x, axis=(2, 3)) 
+        var = jnp.var(x, axis=(2, 3))
+        m = jnp.mean(means, axis=-1, keepdims=True)
+        v = jnp.var(means, axis=-1, keepdims=True)
+        h = (x - means[..., None, None]) / (jnp.sqrt(var[..., None, None] + 1e-5))
         means = (means - m) / (jnp.sqrt(v + 1e-5))
-        h = self.instance_norm(x)
+        # h = self.instance_norm(x)
+        # print("means.shape", means.shape, flush=True)
+        # print("h.shape", h.shape, flush=True)
 
         if self.bias:
             h = h + means[..., None, None] * self.alpha(jnp.zeros(bs,dtype=jnp.int32))[..., None, None]
-            out = self.gamma(jnp.zeros(bs,dtype=jnp.int32)).view(-1, self.num_features, 1, 1) * h + self.beta(jnp.zeros(bs,dtype=jnp.int32)).view(-1, self.num_features, 1, 1)
+            out = self.gamma(jnp.zeros(bs,dtype=jnp.int32)).reshape(-1, self.num_features, 1, 1) * h + self.beta(jnp.zeros(bs,dtype=jnp.int32)).reshape(-1, self.num_features, 1, 1)
         else:
             h = h + means[..., None, None] * self.alpha(jnp.zeros(bs,dtype=jnp.int32))[..., None, None]
-            out = self.gamma(jnp.zeros(bs,dtype=jnp.int32)).view(-1, self.num_features, 1, 1) * h
+            out = self.gamma(jnp.zeros(bs,dtype=jnp.int32)).reshape(-1, self.num_features, 1, 1) * h
+        # reshape back to (bs, h, w, c)
+        out = out.transpose((0, 2, 3, 1))
         return out
 
 

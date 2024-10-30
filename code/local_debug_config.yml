@@ -7,9 +7,9 @@ training:
     log_per_step: 1
     wandb: False
     checkpoint_per_epoch: 1
-    load_from: /kmh-nfs-ssd-eu-mount/code/qiao/NCSN/sqa_NCSN/code/fake_tmp
+    # load_from: /kmh-nfs-ssd-eu-mount/code/qiao/NCSN/sqa_NCSN/code/fake_tmp
 model:
-    name: NCSNv2
+    name: NCSNv2_base
     activation: elu
     ngf: 64
 dataset:

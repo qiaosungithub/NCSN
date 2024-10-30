@@ -6,8 +6,8 @@ from utils.utils import save_img
 
 # TODO
 
-def apply_langevin(state, x, alpha, noise, mask=None):
-    grad, _, _ = state.apply_fn(state.graphdef, state.params, state.rng_states, state.batch_stats, False, x)
+def apply_langevin(state, x, alpha, noise, indices, mask=None):
+    grad, _, _ = state.apply_fn(state.graphdef, state.params, state.rng_states, state.batch_stats, state.useless_variable_state, False, x, indices)
     if mask is not None:
         x = x + (alpha / 2 * grad + sqrt(alpha) * noise) * mask
     else:
@@ -38,7 +38,7 @@ def langevin(state, shape, sigmas, eps, T, rngs, whole_process=False, clamp=Fals
         for t in range(T):
             noise = jax.random.normal(rngs.evaluation()+jax.process_index(), shape=x.shape)
             assert indices.shape == ([bs,])
-            x, grad = fast_apply_langevin(state, x, alpha, noise)
+            x, grad = fast_apply_langevin(state, x, alpha, noise, indices)
             if clamp:
                 x = jnp.clip(x, 0, 1)
             if verbose:
@@ -100,7 +100,7 @@ def langevin_masked(state, x, sigmas, eps, T, rngs, mask, whole_process=False, c
         for t in range(T):
             noise = jax.random.normal(rngs.evaluation()+jax.process_index(), shape=x.shape)
             assert indices.shape == ([bs,])
-            x, grad = fast_apply_langevin(state, x, alpha, noise, mask=mask)
+            x, grad = fast_apply_langevin(state, x, alpha, noise, indices, mask=mask)
             if clamp:
                 x = jnp.clip(x, 0, 1)
             if verbose:

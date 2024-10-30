@@ -11,14 +11,16 @@ from normalization import *
 知道 = ValueError
 
 def get_act(config):
-    # TODO: unmodified
-    if config.model.nonlinearity.lower() == 'elu':
+    """
+    config: the model config
+    """
+    if config.activation.lower() == 'elu':
         return nn.elu
-    elif config.model.nonlinearity.lower() == 'relu':
+    elif config.activation.lower() == 'relu':
         return nn.relu
-    elif config.model.nonlinearity.lower() == 'lrelu':
+    elif config.activation.lower() == 'lrelu':
         return partial(nn.leaky_relu, negative_slope=0.2)
-    elif config.model.nonlinearity.lower() == 'swish':
+    elif config.activation.lower() == 'swish':
         def swish(x):
             return x * nn.sigmoid(x)
         return swish
@@ -83,7 +85,7 @@ def dilated_conv3x3(in_planes, out_planes, dilation, rngs, bias=True, spec_norm=
 
 #         self.act = act
 
-#     def forward(self, x):
+#     def __call__(self, x):
 #         x = self.act(x)
 #         path = x
 #         for i in range(self.n_stages):
@@ -94,20 +96,20 @@ def dilated_conv3x3(in_planes, out_planes, dilation, rngs, bias=True, spec_norm=
     
 class CRPBlock(nn.Module):
 
-    features: int
-    n_stages: int
-    act: nn.Module
-    maxpool: bool
-    spec_norm: bool
-    rngs=None
-
-    def setup(self):
-        features = self.features
-        n_stages = self.n_stages
-        act = self.act
-        maxpool = self.maxpool
-        spec_norm = self.spec_norm
-        rngs = self.rngs
+    def __init__(self,
+        features: int,
+        n_stages: int,
+        act: nn.Module,
+        maxpool: bool,
+        spec_norm: bool,
+        rngs=None,
+    ):
+        self.features = features
+        self.n_stages = n_stages
+        self.act = act
+        self.maxpool = maxpool
+        self.spec_norm = spec_norm
+        self.rngs = rngs
 
         self.convs = []
         for i in range(n_stages):
@@ -121,7 +123,7 @@ class CRPBlock(nn.Module):
 
         self.act = act
 
-    def forward(self, x):
+    def __call__(self, x):
         x = self.act(x)
         path = x
         for i in range(self.n_stages):
@@ -146,7 +148,7 @@ class CRPBlock(nn.Module):
 #         self.maxpool = nn.AvgPool2d(kernel_size=5, stride=1, padding=2)
 #         self.act = act
 
-#     def forward(self, x, y):
+#     def __call__(self, x, y):
 #         x = self.act(x)
 #         path = x
 #         for i in range(self.n_stages):
@@ -160,21 +162,19 @@ class CRPBlock(nn.Module):
 
 # Residual Convolutional Unit
 class RCUBlock(nn.Module):
-
-    features: int
-    n_blocks: int
-    n_stages: int
-    act: 知道=nn.relu
-    spec_norm: bool=False
-    rngs=None
-
-    def setup(self):
-        features = self.features
-        n_blocks = self.n_blocks
-        n_stages = self.n_stages
-        act = self.act
-        spec_norm = self.spec_norm
-        rngs = self.rngs
+    def __init__(self, 
+        features: int,
+        n_blocks: int,
+        n_stages: int,
+        act: 知道=nn.relu,
+        spec_norm: bool=False,
+        rngs=None,):
+        self.features = features
+        self.n_blocks = n_blocks
+        self.n_stages = n_stages
+        self.act = act
+        self.spec_norm = spec_norm
+        self.rngs = rngs
 
         for i in range(n_blocks):
             for j in range(n_stages):
@@ -183,7 +183,7 @@ class RCUBlock(nn.Module):
 
         self.stride = 1
 
-    def forward(self, x):
+    def __call__(self, x):
         for i in range(self.n_blocks):
             residual = x
             for j in range(self.n_stages):
@@ -211,7 +211,7 @@ class CondRCUBlock(nn.Module):
         self.act = act
         self.normalizer = normalizer
 
-    def forward(self, x, y):
+    def __call__(self, x, y):
         for i in range(self.n_blocks):
             residual = x
             for j in range(self.n_stages):
@@ -227,32 +227,32 @@ list或者tuple = (list, tuple)
 # Multi-Scale Feature Block
 class MSFBlock(nn.Module):
 
-    in_planes: list或者tuple
-    features: int
-    spec_norm: bool=False
-    rngs=None
-
-    def setup(self):
+    def __init__(self,
+        in_planes: list或者tuple,
+        features: int,
+        spec_norm: bool=False,
+        rngs=None,
+    ):
         """
         :param in_planes: tuples of input planes
         """
-        in_planes = self.in_planes
-        features = self.features
-        spec_norm = self.spec_norm
-        rngs = self.rngs
-        
+        self.in_planes = in_planes
+        self.features = features
+        self.spec_norm = spec_norm
+        self.rngs = rngs
+
         assert isinstance(in_planes, list) or isinstance(in_planes, tuple)
         self.convs = []
 
         for i in range(len(in_planes)):
             self.convs.append(conv3x3(in_planes[i], features, stride=1, bias=True, spec_norm=spec_norm, rngs=rngs))
 
-    def forward(self, xs, shape):
-        sums = jnp.zeros(shape=(xs[0].shape[0], self.features, *shape), device=xs[0].device)
+    def __call__(self, xs, shape):
+        sums = jnp.zeros(shape=(xs[0].shape[0], *shape, self.features)) # note that here image shape is (bs, h, w, c)
         for i in range(len(self.convs)):
             h = self.convs[i](xs[i])
             # h = F.interpolate(h, size=shape, mode='bilinear', align_corners=True)
-            h = jax.image.resize(h, shape=(xs[0].shape[0], self.features, *shape), method='bilinear')
+            h = jax.image.resize(h, shape=(xs[0].shape[0], *shape, self.features), method='bilinear')
             sums += h
         return sums
 
@@ -275,8 +275,8 @@ class CondMSFBlock(nn.Module):
             self.convs.append(conv3x3(in_planes[i], features, stride=1, bias=True, spec_norm=spec_norm))
             self.norms.append(normalizer(in_planes[i], num_classes, bias=True))
 
-    def forward(self, xs, y, shape):
-        sums = torch.zeros(xs[0].shape[0], self.features, *shape, device=xs[0].device)
+    def __call__(self, xs, y, shape):
+        sums = torch.zeros(xs[0].shape[0], self.features, *shape)
         for i in range(len(self.convs)):
             h = self.norms[i](xs[i], y)
             h = self.convs[i](h)
@@ -286,25 +286,24 @@ class CondMSFBlock(nn.Module):
 
 
 class RefineBlock(nn.Module):
-
-    in_planes: list或者tuple
-    features: int
-    act: 知道=nn.relu
-    start: bool=False
-    end: bool=False
-    maxpool: bool=True
-    spec_norm: bool=False
-    rngs=None
-
-    def setup(self):
-        in_planes = self.in_planes
-        features = self.features
-        act = self.act
-        start = self.start
-        end = self.end
-        maxpool = self.maxpool
-        spec_norm = self.spec_norm
-        rngs = self.rngs
+    def __init__(self,
+        in_planes: list或者tuple,
+        features: int,
+        act: 知道=nn.relu,
+        start: bool=False,
+        end: bool=False,
+        maxpool: bool=True,
+        spec_norm: bool=False,
+        rngs=None,
+    ):
+        self.in_planes = in_planes
+        self.features = features
+        self.act = act
+        self.start = start
+        self.end = end
+        self.maxpool = maxpool
+        self.spec_norm = spec_norm
+        self.rngs = rngs
 
         assert isinstance(in_planes, tuple) or isinstance(in_planes, list)
         self.n_blocks = n_blocks = len(in_planes)
@@ -322,20 +321,25 @@ class RefineBlock(nn.Module):
 
         self.crp = CRPBlock(features, 2, act, maxpool=maxpool, spec_norm=spec_norm, rngs=rngs)
 
-    def forward(self, xs, output_shape):
+    def __call__(self, xs, output_shape):
+        print("in Refine Block ________________________________")
         assert isinstance(xs, tuple) or isinstance(xs, list)
+        for x in xs: print("input shape:", x.shape)
         hs = []
         for i in range(len(xs)):
             h = self.adapt_convs[i](xs[i])
             hs.append(h)
+            print("output shape:", h.shape)
 
         if self.n_blocks > 1:
             h = self.msf(hs, output_shape)
+            print("MSF output shape:", h.shape)
         else:
             h = hs[0]
 
         h = self.crp(h)
         h = self.output_convs(h)
+        print("output shape:", h.shape)
 
         return h
 
@@ -362,7 +366,7 @@ class CondRefineBlock(nn.Module):
 
         self.crp = CondCRPBlock(features, 2, num_classes, normalizer, act, spec_norm=spec_norm)
 
-    def forward(self, xs, y, output_shape):
+    def __call__(self, xs, y, output_shape):
         assert isinstance(xs, tuple) or isinstance(xs, list)
         hs = []
         for i in range(len(xs)):
@@ -382,23 +386,22 @@ class CondRefineBlock(nn.Module):
 int或者tuple反正是形状 = 知道
 
 class ConvMeanPool(nn.Module):
-
-    input_dim: int
-    output_dim: int
-    kernel_size: int或者tuple反正是形状=(3, 3)
-    biases: bool=True
-    adjust_padding: bool=False
-    spec_norm: bool=False
-    rngs=None
-
-    def setup(self):
-        input_dim = self.input_dim
-        output_dim = self.output_dim
-        kernel_size = self.kernel_size
-        biases = self.biases
-        adjust_padding = self.adjust_padding
-        spec_norm = self.spec_norm
-        rngs = self.rngs
+    def __init__(self,
+        input_dim: int,
+        output_dim: int,
+        kernel_size: int或者tuple反正是形状=(3, 3),
+        biases: bool=True,
+        adjust_padding: bool=False,
+        spec_norm: bool=False,
+        rngs=None,
+    ):
+        self.input_dim = input_dim
+        self.output_dim = output_dim
+        self.kernel_size = kernel_size
+        self.biases = biases
+        self.adjust_padding = adjust_padding
+        self.spec_norm = spec_norm
+        self.rngs = rngs
 
         if type(kernel_size) == int:
             kernel_size = (kernel_size, kernel_size)
@@ -409,13 +412,13 @@ class ConvMeanPool(nn.Module):
             conv = spectral_norm(conv)
         self.conv = conv
 
-    def forward(self, inputs):
+    def __call__(self, inputs):
         if self.adjust_padding:
             inputs = jnp.pad(inputs, ((0, 0), (0, 0), (1, 0), (1, 0)), mode='constant')
             
-        output = self.conv(inputs)
-        output = sum([output[:, :, ::2, ::2], output[:, :, 1::2, ::2],
-                      output[:, :, ::2, 1::2], output[:, :, 1::2, 1::2]]) / 4.
+        output = self.conv(inputs) # note that here image shape is (bs, h, w, c)
+        output = sum([output[:, ::2, ::2, :], output[:, 1::2, ::2, :],
+                      output[:, ::2, 1::2, :], output[:, 1::2, 1::2, :]]) / 4.
         return output
 
 class MeanPoolConv(nn.Module):
@@ -426,10 +429,10 @@ class MeanPoolConv(nn.Module):
         if spec_norm:
             self.conv = spectral_norm(self.conv)
 
-    def forward(self, inputs):
-        output = inputs
-        output = sum([output[:, :, ::2, ::2], output[:, :, 1::2, ::2],
-                      output[:, :, ::2, 1::2], output[:, :, 1::2, 1::2]]) / 4.
+    def __call__(self, inputs):
+        output = inputs # note that here image shape is (bs, h, w, c)
+        output = sum([output[:, ::2, ::2, :], output[:, 1::2, ::2, :],
+                      output[:, ::2, 1::2, :], output[:, 1::2, 1::2, :]]) / 4.
         return self.conv(output)
 
 
@@ -442,7 +445,7 @@ class UpsampleConv(nn.Module):
             self.conv = spectral_norm(self.conv)
         self.pixelshuffle = nn.PixelShuffle(upscale_factor=2)
 
-    def forward(self, inputs):
+    def __call__(self, inputs):
         output = inputs
         output = torch.cat([output, output, output, output], dim=1)
         output = self.pixelshuffle(output)
@@ -491,7 +494,7 @@ class ConditionalResidualBlock(nn.Module):
         self.normalize1 = normalization(input_dim, num_classes)
 
 
-    def forward(self, x, y):
+    def __call__(self, x, y):
         output = self.normalize1(x, y)
         output = self.non_linearity(output)
         output = self.conv1(output)
@@ -508,27 +511,26 @@ class ConditionalResidualBlock(nn.Module):
 
 
 class ResidualBlock(nn.Module):
-
-    input_dim: int
-    output_dim: int
-    resample: bool=None
-    act: 知道=nn.elu
-    normalization: 知道=nn.BatchNorm
-    adjust_padding: bool=False
-    dilation: int=None
-    spec_norm: bool=False
-    rngs=None
-
-    def setup(self):
-        input_dim = self.input_dim
-        output_dim = self.output_dim
-        resample = self.resample
-        act = self.act
-        normalization = self.normalization
-        adjust_padding = self.adjust_padding
-        dilation = self.dilation
-        spec_norm = self.spec_norm
-        rngs = self.rngs
+    def __init__(self, 
+        input_dim: int,
+        output_dim: int,
+        resample: bool=None,
+        act: 知道=nn.elu,
+        normalization: 知道=nn.BatchNorm,
+        adjust_padding: bool=False,
+        dilation: int=None,
+        spec_norm: bool=False,
+        rngs=None,
+    ):
+        self.input_dim = input_dim
+        self.output_dim = output_dim
+        self.resample = resample
+        self.act = act
+        self.normalization = normalization
+        self.adjust_padding = adjust_padding
+        self.dilation = dilation
+        self.spec_norm = spec_norm
+        self.rngs = rngs
 
         if resample == 'down':
             if dilation is not None:
@@ -563,7 +565,7 @@ class ResidualBlock(nn.Module):
         self.normalize1 = normalization(input_dim, rngs=rngs)
 
 
-    def forward(self, x):
+    def __call__(self, x):
         # import time
         # start = time.time()
         # def show(s): print (
