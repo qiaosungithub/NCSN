@@ -167,6 +167,9 @@ def train_step_sqa(state:NNXTrainState, batch, rng_init, sigmas):
 
 
 def sample_step(state:NNXTrainState, rng_init, sigmas, config, epoch):
+  '''
+  config: is the sampling config
+  '''
   log_for_0(f"start generating samples for epoch {epoch}")
   output = langevin(
     state,
@@ -312,6 +315,7 @@ def create_train_state(
 ):
   """
   Create initial training state, including the model and optimizer.
+  config: the training config
   """
   # print("here we are in the function 'create_train_state' in train.py; ready to define optimizer")
   graphdef, params, batch_stats, rng_states = nn.split(model, nn.Param, nn.BatchStat, nn.RngState)
@@ -389,57 +393,62 @@ def train_and_evaluate(
   ########### Initialize ###########
   rank = index = jax.process_index()
   print("rank: ", rank) # we hope this is 0-31
-  if rank == 0:
+  training_config = config.training
+  model_config = config.model 
+  dataset_config = config.dataset
+  sampling_config = config.sampling
+  if rank == 0 and training_config.wandb:
     wandb.init(project='deit_nnx', dir=workdir)
     wandb.config.update(config.to_dict())
-  global_seed(config.seed)
+  global_seed(training_config.seed)
 
-  rng = random.key(config.seed)
+  rng = random.key(training_config.seed)
 
-  image_size = config.dataset.image_size
+  image_size = dataset_config.image_size
   assert image_size == 28
 
-  log_for_0('config.batch_size: {}'.format(config.batch_size))
+  log_for_0('config.batch_size: {}'.format(training_config.batch_size))
 
   ########### Create DataLoaders ###########
-  if config.batch_size % jax.process_count() > 0:
+  if training_config.batch_size % jax.process_count() > 0:
     raise ValueError('Batch size must be divisible by the number of processes')
-  local_batch_size = config.batch_size // jax.process_count()
+  local_batch_size = training_config.batch_size // jax.process_count()
   log_for_0('local_batch_size: {}'.format(local_batch_size))
   log_for_0('jax.local_device_count: {}'.format(jax.local_device_count()))
 
   if local_batch_size % jax.local_device_count() > 0:
     raise ValueError('Local batch size must be divisible by the number of local devices')
 
-  train_set = train_set(root=config.dataset.root)
-  val_set = val_set(root=config.dataset.root)
+  train_set = train_set(root=dataset_config.root)
+  val_set = val_set(root=dataset_config.root)
 
   train_loader, steps_per_epoch = create_split(
-    train_set, local_batch_size, 'train', config
+    train_set, local_batch_size, 'train', dataset_config
   )
 
   # eval_loader, steps_per_eval = create_split(
   #   val_set, local_batch_size, 'val', config
   # )
 
-  eval_loader = DataLoader(val_set, batch_size=config.eval_batch_size, shuffle=True, drop_last=False, pin_memory=True)
+  eval_loader = DataLoader(val_set, batch_size=training_config.eval_batch_size, shuffle=True, drop_last=False, pin_memory=True)
   # steps_per_eval = len(eval_loader)
   steps_per_eval = 4
 
   log_for_0('steps_per_epoch: {}'.format(steps_per_epoch))
   log_for_0('steps_per_eval: {}'.format(steps_per_eval))
 
-  if config.steps_per_eval != -1:
-    steps_per_eval = config.steps_per_eval
+  if training_config.steps_per_eval != -1:
+    steps_per_eval = training_config.steps_per_eval
 
   ########### Create Model ###########
-  model_cls = getattr(ncsnv2, config.model)
-  rngs = nn.Rngs(config.seed, params=config.seed + 114, dropout=config.seed + 514, evaluation=config.seed + 1919)
-  dtype = get_dtype(config.half_precision)
+  model_cls = getattr(ncsnv2, model_config.name)
+  rngs = nn.Rngs(training_config.seed, params=training_config.seed + 114, dropout=training_config.seed + 514, evaluation=training_config.seed + 1919)
+  dtype = get_dtype(model_config.half_precision)
   # model = create_model(
   #   model_cls=model_cls, half_precision=config.half_precision,
   #   config=config
   # )
+  ######### 我不会!!!!!!!!!!!!!!!改到这里
   model_init_fn = partial(
     model_cls, 
     dtype=dtype, 
@@ -455,7 +464,7 @@ def train_and_evaluate(
   learning_rate_fn = config.learning_rate
 
   ########### Create Train State ###########
-  state = create_train_state(rng, config, model, image_size, learning_rate_fn)
+  state = create_train_state(rng, training_config, model, image_size, learning_rate_fn)
   # restore checkpoint
   if config.load_from is not None:
     if not os.path.isabs(config.load_from):
@@ -590,7 +599,8 @@ def train_and_evaluate(
             tang_reduce(metrics) 
             step_per_sec = config.log_per_step / timer.elapse_with_reset()
             loss_to_display = metrics['loss']
-            wandb.log({'train_ep:': ep, 
+            if training_config.wandb:
+              wandb.log({'train_ep:': ep, 
                         'train_loss': loss_to_display, 
                         # 'lr': learning_rate_fn(step), 
                         'step': step, 
@@ -616,14 +626,14 @@ def train_and_evaluate(
       # sync batch statistics across replicas
       state = sync_batch_stats(state)
       average_metrics = MyMetrics(reduction=Avger)
-      sample_step(state, rng, sigmas, config, epoch)
+      sample_step(state, rng, sigmas, sampling_config, epoch)
       for n_eval_batch, eval_batch in enumerate(eval_loader):
         images = eval_batch[0].reshape(-1, config.dataset.channels, config.dataset.image_size, config.dataset.image_size)
         ground_truth = prepare_batch_data_sqa(images)
         if n_eval_batch == 0:
-          mse_lower = denoising_eval_step(state, rng, sigmas, config, ground_truth, "lower", epoch)
+          mse_lower = denoising_eval_step(state, rng, sigmas, sampling_config, ground_truth, "lower", epoch)
         if n_eval_batch == 1:
-          mse_even = denoising_eval_step(state, rng, sigmas, config, ground_truth, "even", epoch)
+          mse_even = denoising_eval_step(state, rng, sigmas, sampling_config, ground_truth, "even", epoch)
           break
         # if (n_eval_batch + 1) % config.log_per_step == 0:
         #   if index == 0:
@@ -638,7 +648,7 @@ def train_and_evaluate(
       mse_lower = jnp.mean(mse_lower)
       mse_even = jnp.mean(mse_even)
 
-      if index == 0:
+      if index == 0 and training_config.wandb:
         wandb.log({'mse_lower': mse_lower, 'mse_even': mse_even, 'epoch': epoch})
         log_for_0('epoch: {}; mse_lower: {}, mse_even: {}'.format(epoch, mse_lower, mse_even))
 
@@ -646,7 +656,7 @@ def train_and_evaluate(
   # Wait until computations are done before exiting
   jax.random.normal(jax.random.key(0), ()).block_until_ready()
   checkpointer.close() # avoid exiting before checkpt is saved
-  if index == 0:
+  if index == 0 and training_config.wandb:
     wandb.finish()
 
   return state

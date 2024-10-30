@@ -43,6 +43,7 @@ def get_config():
 
   # Model
   config.model = model = ml_collections.ConfigDict()
+  model.name = 'NCSNv2'
   model.half_precision = True
   model.spec_norm = False
   model.normalization = "InstanceNorm++"
@@ -68,7 +69,7 @@ def get_config():
   training.eval_batch_size = 500
   training.shuffle_buffer_size = 16 * 128
   # config.prefetch = 10
-  # config.weight_decay = 0.0 
+  training.weight_decay = 0.0 
 
   training.num_epochs = 100
   training.wandb = True

@@ -64,7 +64,7 @@ def create_split(
     it = DataLoader(
       dataset,
       batch_size=batch_size,
-      drop_last=False if not config.debug else True,
+      drop_last=False,
       worker_init_fn=partial(worker_init_fn, rank=rank),
       sampler=sampler,
       num_workers=config.num_workers,
