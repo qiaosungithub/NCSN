@@ -4,17 +4,11 @@ import functools
 import time
 from typing import Any
 
-from absl import logging
-from clu import metric_writers
-from clu import periodic_actions
-from flax import jax_utils
 from flax.training import checkpoints
-from flax.training import common_utils
 from flax.training import dynamic_scale as dynamic_scale_lib
 import jax
-from jax import lax
+from jax import lax, random
 import jax.numpy as jnp
-from jax import random
 import ml_collections
 import optax
 
@@ -25,7 +19,7 @@ from utils.logging_util import log_for_0, Timer
 from flax import jax_utils as ju
 from utils.metric_utils import tang_reduce, MyMetrics, Avger
 from torch.utils.data import DataLoader
-from utils.utils import train_set_, val_set_
+from utils.utils import train_set_, val_set_, get_sigmas, save_img, corruption
 import ncsnv2
 
 from utils.display_utils import display_model
@@ -33,9 +27,9 @@ from functools import partial
 from flax.training.train_state import TrainState as FlaxTrainState
 import flax.nnx as nn
 from kaiming_utils.info_util import print_params
-from utils.utils import get_sigmas, save_img, corruption
 from langevin import langevin, langevin_masked
 from 数据集 import create_split, prepare_batch_data_sqa
+from train_step_sqa import train_step_sqa
 
 import orbax.checkpoint as ocp
 from flax.training import checkpoints
@@ -122,47 +116,6 @@ def create_learning_rate_fn(
   )
       
   return lr_schedule
-
-def train_step_sqa(state:NNXTrainState, images, rng_init, sigmas):
-  """Perform a single training step."""
-
-  # ResNet has no dropout; but maintain rng_dropout for future usage
-  rng_step = random.fold_in(rng_init, state.step)
-  rng_device = random.fold_in(rng_step, lax.axis_index(axis_name='batch'))
-  rng, _ = random.split(rng_device)
-
-  sigma_indices = random.randint(rng, (images.shape[0],), 0, len(sigmas))
-  sigma_batch = sigmas[sigma_indices].reshape(-1, 1, 1, 1)
-
-  noise = random.normal(rng, images.shape) * sigma_batch
-  images_noise = images + noise
-  target = - noise / sigma_batch
-
-  def loss_fn(params):
-    """loss function used for training."""
-    outputs, new_batch_stats, new_rng_params = state.apply_fn(
-      state.graphdef, params, state.rng_states, state.batch_stats, state.useless_variable_state, True, images_noise, sigma_indices)
-    outputs = outputs * sigma_batch
-    loss = jnp.mean((outputs - target)**2)
-    return loss, (outputs, new_batch_stats, new_rng_params)
-
-  grad_fn = jax.value_and_grad(loss_fn, has_aux=True)
-  aux, grads = grad_fn(state.params)
-  # Re-use same axis_name as in the call to `pmap(...train_step...)` below.
-  grads = lax.pmean(grads, axis_name='batch')
-
-  outputs, new_batch_stats, new_rng_params = aux[1]
-
-  loss = aux[0]
-  loss = lax.pmean(loss, axis_name='batch')
-  # TODO: implement ema
-  metrics = {"loss": loss}
-
-  new_state = state.apply_gradients(
-    grads=grads, batch_stats=new_batch_stats, rng_states=new_rng_params
-  )
-
-  return new_state, metrics
 
 
 def sample_step(state:NNXTrainState, rng_init, sigmas, config, epoch):
@@ -402,8 +355,6 @@ def train_and_evaluate(
     wandb.config.update(config.to_dict())
   global_seed(training_config.seed)
 
-  rng = random.key(training_config.seed)
-
   image_size = dataset_config.image_size
   assert image_size == 28
 
@@ -463,7 +414,7 @@ def train_and_evaluate(
   learning_rate_fn = training_config.learning_rate
 
   ########### Create Train State ###########
-  state = create_train_state(rng, training_config, model, image_size, learning_rate_fn)
+  state = create_train_state(rngs, training_config, model, image_size, learning_rate_fn)
   # restore checkpoint
   if training_config.load_from is not None:
     if not os.path.isabs(training_config.load_from):
@@ -482,10 +433,10 @@ def train_and_evaluate(
 
   # use pmap to parallel training
   sigmas = get_sigmas(sampling_config)
-  p_train_step = jax.pmap(
-    functools.partial(train_step_sqa, rng_init=rng, sigmas=sigmas),
-    axis_name='batch',
-  )
+  # p_train_step = jax.pmap(
+  #   functools.partial(train_step_sqa, rng_init=rngs, sigmas=sigmas),
+  #   axis_name='batch',
+  # )
 
   ########### Checkpointer ###########
   checkpointer = ocp.StandardCheckpointer()
@@ -587,7 +538,8 @@ def train_and_evaluate(
 
       # print(batch["image"].shape)
 
-      state, metrics = p_train_step(state, images) # here is the training step
+      # state, metrics = p_train_step(state, images) # here is the training step
+      state, metrics = train_step_sqa(state, images, rngs, sigmas)
       
       if epoch == epoch_offset and n_batch == 0:
         log_for_0('Initial compilation completed. Reset timer.')
@@ -625,14 +577,14 @@ def train_and_evaluate(
       # sync batch statistics across replicas
       state = sync_batch_stats(state)
       average_metrics = MyMetrics(reduction=Avger)
-      sample_step(state, rng, sigmas, sampling_config, epoch)
+      sample_step(state, rngs, sigmas, sampling_config, epoch)
       for n_eval_batch, eval_batch in enumerate(eval_loader):
         images = eval_batch[0].reshape(-1, config.dataset.channels, config.dataset.image_size, config.dataset.image_size)
         ground_truth = prepare_batch_data_sqa(images)
         if n_eval_batch == 0:
-          mse_lower = denoising_eval_step(state, rng, sigmas, sampling_config, ground_truth, "lower", epoch)
+          mse_lower = denoising_eval_step(state, rngs, sigmas, sampling_config, ground_truth, "lower", epoch)
         if n_eval_batch == 1:
-          mse_even = denoising_eval_step(state, rng, sigmas, sampling_config, ground_truth, "even", epoch)
+          mse_even = denoising_eval_step(state, rngs, sigmas, sampling_config, ground_truth, "even", epoch)
           break
         # if (n_eval_batch + 1) % config.log_per_step == 0:
         #   if index == 0:

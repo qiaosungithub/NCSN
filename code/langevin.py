@@ -3,6 +3,8 @@ import os
 from math import sqrt
 import jax.numpy as jnp
 from utils.utils import save_img
+from jax import random
+from jax import lax
 
 # TODO
 
