@@ -44,17 +44,11 @@ def get_config():
   # Model
   config.model = model = ml_collections.ConfigDict()
   model.half_precision = True
-  model.spec_norm = False
-  model.normalization = "InstanceNorm++"
-  model.activation = "elu"
-  model.ngf = 64
 
   # Dataset
   config.dataset = dataset = ml_collections.ConfigDict()
-  dataset.name = 'MNIST'
-  dataset.image_size = 28
-  dataset.channels = 1
-  dataset.root = '/kmh-nfs-ssd-eu-mount/code/qiao/data/MNIST/'
+  dataset.name = 'imagenet'
+  dataset.root = '/kmh-nfs-us-mount/data/imagenet'
   dataset.num_workers = 4
   dataset.prefetch_factor = 2
   dataset.pin_memory = False
@@ -63,13 +57,10 @@ def get_config():
   # Training
   config.training = training = ml_collections.ConfigDict()
   training.learning_rate = 0.1
-  # config.momentum = 0.9
-  training.batch_size = 128
-  training.eval_batch_size = 500
-  training.shuffle_buffer_size = 16 * 128
-  # config.prefetch = 10
-  # config.weight_decay = 0.0 
-
+  training.warmup_epochs = 5
+  training.momentum = 0.9
+  training.shuffle_buffer_size = 16 * 1024
+  # training.prefetch = 10 # Don't know what exactly it is
   training.num_epochs = 100
   training.wandb = True
   training.log_per_step = 100
@@ -79,18 +70,6 @@ def get_config():
   training.checkpoint_max_keep = 2
   training.steps_per_eval = -1
   training.seed = 3407  # init random seed
-
-
-  # sampling
-  config.sampling = sampling = ml_collections.ConfigDict()
-  sampling.sigma_begin = 28
-  sampling.n_noise_levels = 75
-  sampling.sigma_end = 0.01
-  sampling.ema = True
-  sampling.ema_decay = 0.999
-  sampling.eps = 5e-5
-  sampling.T = 5
-  sampling.save_dir = '/kmh-nfs-ssd-eu-mount/code/qiao/NCSN/sqa_NCSN/images/'
 
   ################ WARNING ################
   # DO NOT DIRECTLY MODIFY THIS FILE, IN  #
@@ -103,10 +82,10 @@ def get_config():
 
 def metrics():
   return [
-    'train_loss',
-    'eval_loss',
-    'train_accuracy',
-    'eval_accuracy',
-    'steps_per_second',
-    'train_learning_rate',
+      'train_loss',
+      'eval_loss',
+      'train_accuracy',
+      'eval_accuracy',
+      'steps_per_second',
+      'train_learning_rate',
   ]

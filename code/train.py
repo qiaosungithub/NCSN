@@ -75,8 +75,8 @@ def create_model(*, model_cls, half_precision, config, **kwargs):
     model_dtype = jnp.float32
   return model_cls(
     dtype=model_dtype, 
-    ngf=config.ngf, 
-    n_noise_levels=config.n_noise_levels,
+    ngf=config.model.ngf, 
+    n_noise_levels=config.sampling.n_noise_levels,
     config=config,
     **kwargs)
 
@@ -84,32 +84,6 @@ def cross_entropy_loss(logits, labels):
   xentropy = optax.softmax_cross_entropy(logits=logits, labels=labels)
   return jnp.mean(xentropy)
 
-
-def compute_metrics(logits, labels):
-  # this is the version for both one-hot labels and not one-hot labels
-  # compute per-sample loss
-  # one_hot_labels = common_utils.onehot(labels, num_classes=NUM_CLASSES)
-  # print("labels.shape:", labels.shape)
-  if labels.shape[-1] != NUM_CLASSES:
-    labels = jax.nn.one_hot(labels, NUM_CLASSES)
-
-  xentropy = optax.softmax_cross_entropy(logits=logits, labels=labels)
-  loss = xentropy  # (local_batch_size,)
-
-  accuracy = (jnp.argmax(logits, -1) == jnp.argmax(labels, -1))  # (local_batch_size, )
-  # here we modify, but not very well defined
-  metrics = {
-      'loss': loss,
-      'accuracy': accuracy,
-      'labels': labels,
-  }
-  # print("1 metrics' labels shape:", metrics['labels'].shape)
-  metrics = lax.all_gather(metrics, axis_name='batch')
-  labels = metrics['labels']
-  metrics = jax.tree_map(lambda x: x.flatten(), metrics)  # (batch_size,)
-  metrics['labels'] = labels
-  # print("2 metrics' labels shape:", metrics['labels'].shape)
-  return metrics
 
 def create_learning_rate_fn(
   config: ml_collections.ConfigDict,
@@ -435,6 +409,9 @@ def train_and_evaluate(
 
   if local_batch_size % jax.local_device_count() > 0:
     raise ValueError('Local batch size must be divisible by the number of local devices')
+
+  train_set = train_set(root=config.dataset.root)
+  val_set = val_set(root=config.dataset.root)
 
   train_loader, steps_per_epoch = create_split(
     train_set, local_batch_size, 'train', config

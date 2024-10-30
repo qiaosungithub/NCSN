@@ -1,0 +1,14 @@
+# Put your `run_remote.sh` configs in this YAML file
+training:
+    learning_rate: 0.1
+    num_epochs: 100
+    batch_size: 1024
+    log_per_step: 20
+    # checkpoint_per_epoch: 1000 # i.e. no checkpoint
+model:
+    name: ResNet50
+dataset:
+    prefetch_factor: 2
+    num_workers: 64 # NOTE: On V2, if you don't use num_workers=64, sometimes the code will exit unexpectedly
+
+# NOTE: you cannot add more hierarchy structure without modifying default.py and load_config.py

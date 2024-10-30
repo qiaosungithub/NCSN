@@ -7,6 +7,8 @@ import os
 import numpy as np
 from PIL import Image
 import jax
+import torch
+from functools import partial
 
 def save_model(save_path,
                model,
@@ -93,15 +95,29 @@ transform = transforms.Compose([
 ])
 
 # image tensor range [0, 1]
-train_set = MNIST(
-    root="./data",
+# train_set = MNIST(
+#     root="./data",
+#     download=True,
+#     transform=transform,
+#     train=True,
+# )
+
+train_set = partial(
+    MNIST,
     download=True,
     transform=transform,
     train=True,
 )
 
-val_set = MNIST(
-    root="./data",
+# val_set = MNIST(
+#     root="./data",
+#     download=True,
+#     transform=transform,
+#     train=False,
+# )
+
+val_set = partial(
+    MNIST,
     download=True,
     transform=transform,
     train=False,
@@ -116,29 +132,29 @@ class AddGaussianNoise(object):
         noise = torch.randn(tensor.size()) * self.std + self.mean
         return tensor + noise
 
-# CIFAR dataset
-cifar_transform = transforms.Compose([
-    transforms.RandomHorizontalFlip(),
-    transforms.RandomCrop(32, padding=4), 
-    transforms.RandomRotation(15), 
-    transforms.ToTensor(),
-    AddGaussianNoise(0.0, 0.1), 
-    transforms.Normalize([125 / 255, 124 / 255, 115 / 255], [60 / 255, 59 / 255, 64 / 255])
-])
+# # CIFAR dataset
+# cifar_transform = transforms.Compose([
+#     transforms.RandomHorizontalFlip(),
+#     transforms.RandomCrop(32, padding=4), 
+#     transforms.RandomRotation(15), 
+#     transforms.ToTensor(),
+#     AddGaussianNoise(0.0, 0.1), 
+#     transforms.Normalize([125 / 255, 124 / 255, 115 / 255], [60 / 255, 59 / 255, 64 / 255])
+# ])
 
-cifar_train_set = CIFAR10(
-    root="./data",
-    download=True,
-    transform=cifar_transform,
-    train=True,
-)
+# cifar_train_set = CIFAR10(
+#     root="./data",
+#     download=True,
+#     transform=cifar_transform,
+#     train=True,
+# )
 
-cifar_val_set = CIFAR10(
-    root="./data",
-    download=True,
-    transform=cifar_transform,
-    train=False,
-)
+# cifar_val_set = CIFAR10(
+#     root="./data",
+#     download=True,
+#     transform=cifar_transform,
+#     train=False,
+# )
 
 
 class MockResidualBlock(nn.Module):
