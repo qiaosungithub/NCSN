@@ -79,7 +79,9 @@ def get_config():
   config.sigma_end = 0.01
   config.ema = True
   config.ema_decay = 0.999
-  
+  config.eps = 5e-5
+  config.T = 5
+  config.save_dir = 'kmh-nfs-ssd-eu-mount/code/qiao/NCSN/sqa_NCSN/images/'
   
   return config
 

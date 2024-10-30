@@ -33,7 +33,9 @@ from functools import partial
 from flax.training.train_state import TrainState as FlaxTrainState
 import flax.nnx as nn
 from kaiming_utils.info_util import print_params
-from utils.utils import get_sigmas
+from utils.utils import get_sigmas, save_img, corruption
+from langevin import langevin, langevin_masked
+from 数据集 import create_split, prepare_batch_data_sqa
 
 import orbax.checkpoint as ocp
 from flax.training import checkpoints
@@ -189,13 +191,99 @@ def train_step_sqa(state:NNXTrainState, batch, rng_init, sigmas):
   return new_state, metrics
 
 
-def eval_step(state:NNXTrainState, batch, rng_init):
-  labels = batch['label']
-  images = batch['image']
+def sample_step(state:NNXTrainState, rng_init, sigmas, config, epoch):
+  log_for_0(f"start generating samples for epoch {epoch}")
+  output = langevin(
+    state,
+    shape=(64, 1, 28, 28),
+    sigmas=sigmas,
+    eps=config.eps,
+    T=config.T,
+    rngs=rng_init,
+    whole_process=False,
+    clamp=False,
+    verbose=True # we will set to False later
+  )
+  dir=config.save_dir + "generated/"
+  save_img(output, dir, im_name=f"{epoch}.png", grid=(8, 8))
 
-  logits, new_batch_stats, new_rng_params = state.apply_fn(
-    state.graphdef, state.params, state.rng_states, state.batch_stats, False, images) # False: is_training
-  return compute_metrics(logits, labels)
+  _, all_samples = langevin(
+    state,
+    shape=(10, 1, 28, 28),
+    sigmas=sigmas,
+    eps=config.eps,
+    T=config.T,
+    rngs=rng_init,
+    whole_process=True,
+    clamp=False,
+    verbose=False
+  )
+  dir=config.save_dir + "sample_process/"
+  g = all_samples.shape[0]
+  assert g%10 == 0
+  save_img(all_samples, dir, im_name=f"{epoch}.png", grid=(g//10, 10)) # this maybe reverse
+  log_for_0(f"saved samples for epoch {epoch}")
+
+def denoising_eval_step(state:NNXTrainState, rng_init, sigmas, config, ground_truth, type_, epoch):
+
+  assert type_ in {"even", "lower"}
+  ground_truth_0=ground_truth[64:74]
+  ground_truth = ground_truth[:64]
+  log_for_0(f"evaluating denoising for epoch {epoch}")
+  corrupted, mask = corruption(
+    ground_truth, 
+    type_=type_, 
+    rngs=rng_init, 
+    noise_scale=1, 
+    clamp=False
+  )
+  # denoising process
+  recovered = langevin_masked(
+    state,
+    x=corrupted,
+    sigmas=sigmas,
+    eps=config.eps,
+    T=config.T,
+    mask=mask,
+    rngs=rng_init,
+    whole_process=False,
+    clamp=False,
+    verbose=True # we will set to False later
+  )
+  dir=config.save_dir + f"denoising_{type_}/{epoch}"
+  save_img(recovered, dir, im_name=f"recovered.png", grid=(8, 8))
+  save_img(ground_truth, dir, im_name=f"groundtruth.png", grid=(8, 8))
+  save_img(corrupted, dir, im_name=f"corrupted.png", grid=(8, 8))
+
+  # calculate mse
+  mse = jnp.mean((recovered - ground_truth) ** 2)
+
+  corrupted, mask = corruption(
+    ground_truth_0, 
+    type_=type_, 
+    rngs=rng_init, 
+    noise_scale=1, 
+    clamp=False
+  )
+  _, all_samples = langevin_masked(
+    state,
+    x=corrupted,
+    sigmas=sigmas,
+    eps=config.eps,
+    T=config.T,
+    mask=mask,
+    rngs=rng_init,
+    whole_process=True,
+    clamp=False,
+    verbose=False
+  )
+  dir=config.save_dir + f"denoising_{type_}_process/{epoch}"
+  g = all_samples.shape[0]
+  assert g%10 == 0
+  save_img(all_samples, dir, im_name=f"recovered.png", grid=(g//10, 10)) # this maybe reverse
+  log_for_0(f"saved denoising for epoch {epoch} and type {type_}")
+
+  return mse
 
 
 def restore_checkpoint(state, workdir):
@@ -325,6 +413,7 @@ def train_and_evaluate(
 
   ########### Initialize ###########
   rank = index = jax.process_index()
+  print("rank: ", rank) # we hope this is 0-31
   if rank == 0:
     wandb.init(project='deit_nnx', dir=workdir)
     wandb.config.update(config.to_dict())
@@ -347,11 +436,17 @@ def train_and_evaluate(
   if local_batch_size % jax.local_device_count() > 0:
     raise ValueError('Local batch size must be divisible by the number of local devices')
 
-  train_loader = DataLoader(train_set, batch_size=config.batch_size, shuffle=True, drop_last=False, pin_memory=True)
-  steps_per_epoch = len(train_loader)
+  train_loader, steps_per_epoch = create_split(
+    train_set, local_batch_size, 'train', config
+  )
+
+  # eval_loader, steps_per_eval = create_split(
+  #   val_set, local_batch_size, 'val', config
+  # )
 
   eval_loader = DataLoader(val_set, batch_size=config.eval_batch_size, shuffle=True, drop_last=False, pin_memory=True)
-  steps_per_eval = len(eval_loader)
+  # steps_per_eval = len(eval_loader)
+  steps_per_eval = 4
 
   log_for_0('steps_per_epoch: {}'.format(steps_per_epoch))
   log_for_0('steps_per_eval: {}'.format(steps_per_eval))
@@ -361,7 +456,7 @@ def train_and_evaluate(
 
   ########### Create Model ###########
   model_cls = getattr(ncsnv2, config.model)
-  rngs = nn.Rngs(config.seed, params=config.seed + 114, dropout=config.seed + 514)
+  rngs = nn.Rngs(config.seed, params=config.seed + 114, dropout=config.seed + 514, evaluation=config.seed + 1919)
   dtype = get_dtype(config.half_precision)
   # model = create_model(
   #   model_cls=model_cls, half_precision=config.half_precision,
@@ -397,51 +492,92 @@ def train_and_evaluate(
   state = ju.replicate(state) # NOTE: this doesn't split the RNGs automatically, but it is an intended behavior
   model_avg = state.params
   yierbayiyiliuqi = len(train_loader.dataset) # this equals to ??
+  print("yierbayiyiliuqi: ", yierbayiyiliuqi)
 
   # use pmap to parallel training
-  # 停在这里
   sigmas = get_sigmas(config)
   p_train_step = jax.pmap(
     functools.partial(train_step_sqa, rng_init=rng, sigmas=sigmas),
     axis_name='batch',
   )
-  p_eval_step = jax.pmap(eval_step, axis_name='batch')
 
-  train_metrics = []
-  hooks = []
-  # if jax.process_index() == 0:
-  #   hooks += [periodic_actions.Profile(num_profile_steps=5, logdir=workdir)]
-  train_metrics_last_t = time.time()
+  ########### Checkpointer ###########
+  checkpointer = ocp.StandardCheckpointer()
+  def _restore(ckpt_path, item, **restore_kwargs):
+      return ocp.StandardCheckpointer.restore(checkpointer, ckpt_path, target=item)
+  setattr(checkpointer, 'restore', _restore)
+  def save_checkpoint(state:NNXTrainState, workdir):
+      # TODO: this function currently emits lots of "background messages". Try to suppress them
+      state = jax.device_get(jax.tree_util.tree_map(lambda x: x[0], state))
+      step = int(state.step)
+      log_for_0('Saving checkpoint to {}, with step {}'.format(workdir, step))
+      merged_params: nn.State = state.params
+      # 不能把rng merge进去！
+      # if len(state.rng_states) > 0:
+      #     merged_params = nn.State.merge(merged_params, state.rng_states)
+      if len(state.batch_stats) > 0:
+          merged_params = nn.State.merge(merged_params, state.batch_stats)
+      checkpoints.save_checkpoint_multiprocess(workdir, {
+          'mo_xing': merged_params,
+          'you_hua_qi': state.opt_state,
+          'step': step
+      }, step, keep=2, orbax_checkpointer=checkpointer)
+      # TODO: FATAL: this "keep" param seems not being used. This must be fixed ASAP!
+  def restore_checkpoint(model_init_fn, state, workdir):
+      abstract_model = nn.eval_shape(lambda: model_init_fn(rngs=nn.Rngs(0)))
+      rng_states = state.rng_states
+      abs_state = nn.state(abstract_model)
+      _, useful_abs_state = abs_state.split(nn.RngState, ...)
+      fake_state = {
+          'mo_xing': useful_abs_state,
+          'you_hua_qi': state.opt_state,
+          'step': 0
+      }
+      loaded_state = checkpoints.restore_checkpoint(workdir, target=fake_state,orbax_checkpointer=checkpointer)
+      merged_params = loaded_state['mo_xing']
+      opt_state = loaded_state['you_hua_qi']
+      step = loaded_state['step']
+      params, batch_stats = merged_params.split(nn.Param, nn.BatchStat)
+      return state.replace(
+          params=params,
+          rng_states=rng_states,
+          batch_stats=batch_stats,
+          opt_state=opt_state,
+          step=step
+      )
+
+  ########### Training Loop ###########
   log_for_0('Initial compilation, this might take some minutes...')
+
+  last_model = None
+  if config.get('ema_decay'):
+    assert config.ema_decay > 0.0 and config.ema_decay < 1.0, 'ema_decay should be in (0, 1)'
+    log_for_0('Using EMA with decay {}'.format(config.ema_decay))
+    p_update_model_avg = jax.pmap(partial(_update_model_avg, ema_decay=config.ema_decay), axis_name='batch')
+
   for epoch in range(epoch_offset, config.num_epochs):
+    ########### Train ###########
+    timer = Timer()
     if jax.process_count() > 1:
       train_loader.sampler.set_epoch(epoch)
     log_for_0('epoch {}...'.format(epoch))
-    # print("train_loader: " , train_loader)
-    # print("train_loader.sampler: ", train_loader.sampler)
-    # print("length of train_loader: ", len(train_loader))
-    # print("length of train_loader.sampler: ", len(train_loader.sampler))
-    # print("length of train_loader.dataset: ", len(train_loader.dataset))
+    timer.reset()
     for n_batch, batch in enumerate(train_loader):
-      # print("number of batch:", n_batch)
-      # print("shape of the batch images:", batch[0].shape)
-      batch = pre_process_batch(batch)
-      batch = apply_mixup_cutmix_batch(config.dataset, batch)
+
+      images = batch[0].reshape(-1, config.dataset.channels, config.dataset.image_size, config.dataset.image_size)
       step = epoch * steps_per_epoch + n_batch
-      # print(batch[0].shape)
-      batch = prepare_batch_data_sqa(batch)
+      ep = step * config.batch_size / yierbayiyiliuqi
+      print("images.shape: ", images.shape)
+      images = prepare_batch_data_sqa(images)
 
       # print("batch['image'].shape:", batch['image'].shape)
-      # print("batch['label'].shape:", batch['label'].shape)
       # assert False
 
-      
       # # here is code for us to visualize the images
       # import matplotlib.pyplot as plt
       # import numpy as np
       # import os
       # print(batch["image"].shape)
-      # # print(batch["label"].shape)
 
       # # save batch["image"] to ./images/{epoch}/i.png
       # rank = jax.process_index()
@@ -464,112 +600,75 @@ def train_and_evaluate(
 
 
       # print(batch["image"].shape)
-      # assert batch['label'].shape == (1, local_batch_size, 1000) # the first dimension is the number of devices
-      assert batch['label'].shape[-1] == NUM_CLASSES
+
       state, metrics = p_train_step(state, batch) # here is the training step
       
       if epoch == epoch_offset and n_batch == 0:
         log_for_0('Initial compilation completed. Reset timer.')
-        train_metrics_last_t = time.time()
-      
-      for h in hooks:
-        h(step)
-
-      # normalize to IN1K epoch anyway
-      ep = step * config.batch_size / 1281167
 
       if config.get('log_per_step'):
-        train_metrics.append(metrics)
         if (step + 1) % config.log_per_step == 0:
-          # print('Hello')
-          train_metrics = common_utils.get_metrics(train_metrics)
-          train_metrics.pop('labels')  # used in val only
-          summary = {
-            f'train_{k}': v
-            for k, v in jax.tree_util.tree_map(
-                lambda x: float(x.mean()), train_metrics
-            ).items()
-          }
-          summary['steps_per_second'] = config.log_per_step / (time.time() - train_metrics_last_t)
-          # summary['seconds_per_step'] = (time.time() - train_metrics_last_t) / config.log_per_step
+          if index == 0:
+            tang_reduce(metrics) 
+            step_per_sec = config.log_per_step / timer.elapse_with_reset()
+            loss_to_display = metrics['loss']
+            wandb.log({'train_ep:': ep, 
+                        'train_loss': loss_to_display, 
+                        # 'lr': learning_rate_fn(step), 
+                        'step': step, 
+                        'step_per_sec': step_per_sec})
+            log_for_0('epoch: {} step: {} loss: {}, step_per_sec: {}'.format(ep, step, loss_to_display, step_per_sec))
+      if config.get('ema_decay'):
+        # EMA
+        model_avg = p_update_model_avg(model_avg, state.params)
 
-          # step for tensorboard
-          summary["ep"] = ep
+    ########### Save Checkpt ###########
+    # we first save checkpoint, then do eval. Reasons: 1. if eval emits an error, then we still have our model; 2. avoid the program exits before the checkpointer finishes its job.
+    # NOTE: when saving checkpoint, should sync batch stats first.
+    state = sync_batch_stats(state)
+    if (epoch + 1) % config.checkpoint_per_epoch == 0:
+        # if index == 0:
+        save_checkpoint(state, workdir)
+    if epoch == config.num_epochs - 1:
+      state = state.replace(params=model_avg)
 
-          writer.write_scalars(step + 1, summary)
-          train_metrics = []
-          train_metrics_last_t = time.time()
-
-    # logging per epoch
+    ########### Eval ###########
     if (epoch + 1) % config.eval_per_epoch == 0:
       log_for_0('Eval epoch {}...'.format(epoch))
-      eval_metrics = []
       # sync batch statistics across replicas
       state = sync_batch_stats(state)
+      average_metrics = MyMetrics(reduction=Avger)
+      sample_step(state, rng, sigmas, config, epoch)
       for n_eval_batch, eval_batch in enumerate(eval_loader):
-        if (n_eval_batch + 1) % config.log_per_step == 0:
-          log_for_0('eval: {}/{}'.format(n_eval_batch + 1, steps_per_eval))
-        eval_batch = prepare_batch_data_sqa(eval_batch, local_batch_size)
+        images = eval_batch[0].reshape(-1, config.dataset.channels, config.dataset.image_size, config.dataset.image_size)
+        ground_truth = prepare_batch_data_sqa(images)
+        if n_eval_batch == 0:
+          mse_lower = denoising_eval_step(state, rng, sigmas, config, ground_truth, "lower", epoch)
+        if n_eval_batch == 1:
+          mse_even = denoising_eval_step(state, rng, sigmas, config, ground_truth, "even", epoch)
+          break
+        # if (n_eval_batch + 1) % config.log_per_step == 0:
+        #   if index == 0:
+        #     log_for_0('eval: {}/{}'.format(n_eval_batch + 1, steps_per_eval))
+        # eval_image = prepare_batch_data_sqa(eval_batch[0], local_batch_size)
 
-        metrics = p_eval_step(state, eval_batch) # here is the eval step
-        # print("metrics' labels shape:", metrics['labels'].shape)
-        assert metrics['labels'].shape[-1] == NUM_CLASSES
-        eval_metrics.append(metrics)
+        # metrics = p_eval_step(state, eval_batch) # here is the eval step
+        # # print("metrics' labels shape:", metrics['labels'].shape)
+        # assert metrics['labels'].shape[-1] == NUM_CLASSES
+        # eval_metrics.append(metrics)
+      print("mse_lower: ", mse_lower)
+      mse_lower = jnp.mean(mse_lower)
+      mse_even = jnp.mean(mse_even)
 
-      eval_metrics = common_utils.get_metrics(eval_metrics) # loss, acc, labels
-      eval_metrics_copy = eval_metrics # labels shape: (local_batch_size, 1000)
-      eval_metrics = jax.tree_map(lambda x: x.flatten(), eval_metrics)
-      log_for_0('evaluated samples: {}'.format(eval_metrics['labels'].size))
-      valid = (eval_metrics_copy['labels'] >= 0)
-      # print(valid.shape)
-      # print(eval_metrics_copy['labels'].shape)
-      # print(eval_metrics_copy)
-      # print(eval_metrics["labels"].shape)
-      # print(eval_metrics)
-      # assert valid.shape[-1] == NUM_CLASSES
+      if index == 0:
+        wandb.log({'mse_lower': mse_lower, 'mse_even': mse_even, 'epoch': epoch})
+        log_for_0('epoch: {}; mse_lower: {}, mse_even: {}'.format(epoch, mse_lower, mse_even))
 
-      # print(valid.shape)
-      # for key, val in eval_metrics_copy.items():
-      #   print(key, val.shape)
-      # for key, val in eval_metrics.items():
-      #   print(key, val.shape)
-      
-      # valid shape: 
-      # print(valid.shape)
-      valid = valid.reshape(-1, NUM_CLASSES)
-      valid = valid[:, 0] # only take the first column, because we only need to pick out these valid samples
-      # print(valid.shape)
-      assert valid.ndim == 1
-      # omit label in eval_metrics
-      eval_metrics = {
-        'loss': eval_metrics['loss'],
-        'accuracy': eval_metrics['accuracy'],
-      }
-      eval_metrics = jax.tree_map(lambda x: x[valid], eval_metrics)
-      log_for_0('valid samples: {}'.format(eval_metrics['loss'].size))
-
-      summary = jax.tree_util.tree_map(lambda x: float(x.mean()), eval_metrics)
-      log_for_0(
-        'eval epoch: %d, loss: %.6f, accuracy: %.6f',
-        epoch,
-        summary['loss'],
-        summary['accuracy'] * 100,
-      )
-      summary = {f'eval_{key}': val for key, val in summary.items()}
-      summary["ep"] = ep
-      writer.write_scalars(step + 1, summary)
-      writer.flush()
-
-    if (
-      (epoch + 1) % config.checkpoint_per_epoch == 0
-      or epoch == config.num_epochs
-      or epoch == 0  # saving at the first epoch for sanity check
-    ):
-      state = sync_batch_stats(state)
-      # TODO{km}: suppress the annoying warning.
-      save_checkpoint(state, workdir)
 
   # Wait until computations are done before exiting
   jax.random.normal(jax.random.key(0), ()).block_until_ready()
+  checkpointer.close() # avoid exiting before checkpt is saved
+  if index == 0:
+    wandb.finish()
 
   return state

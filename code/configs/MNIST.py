@@ -38,6 +38,11 @@ def get_config():
   dataset = config.dataset
   dataset.cache = True
 
+  # checkpoint
+  config.checkpoint_per_epoch = 20
+  config.checkpoint_max_keep = 2
+  config.load_from = None
+
   # Consider setting the batch size to max(tpu_chips * 256, 8 * 1024) if you
   # train on a larger pod slice.  
   config.learning_rate = 1e-4
@@ -49,6 +54,9 @@ def get_config():
   config.activation = "elu"
   config.ema = True
   config.ema_decay = 0.999
+  config.eps = 5e-5
+  config.T = 5
+  config.save_dir = 'kmh-nfs-ssd-eu-mount/code/qiao/NCSN/sqa_NCSN/images/'
 
   return config
 

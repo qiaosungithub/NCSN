@@ -5,6 +5,8 @@ import flax.linen as nn
 import zhh.F as F
 import os
 import numpy as np
+from PIL import Image
+import jax
 
 def save_model(save_path,
                model,
@@ -51,20 +53,34 @@ def rescale(x, lo, hi):
     # return:
     return x
 
-
-def corruption(x, type_='ebm', noise_scale=0.3):
-    assert type_ in ['ebm', 'flow']
+def corruption(x, type_, rngs, noise_scale=1, clamp=False):
     # mask=1 if the pixel is visible
-    mask = torch.zeros_like(x)
-    if type_ == 'ebm':
+    mask = jnp.zeros_like(x)
+    if type_ == 'even':
         # Corrupt the rows 0, 2, 4, ....
-        mask[..., torch.arange(0, mask.shape[-2], step=2), :] = 1
-    elif type_ == 'flow':
+        mask[..., jnp.arange(0, mask.shape[-2], step=2), :] = 1
+    elif type_ == 'lower':
         # Corrupt the lower part
         mask[..., :mask.shape[-2] // 2, :] = 1
-    broken_data = x * mask + (1 - mask) * noise_scale * torch.randn_like(x)
-    broken_data = torch.clamp(broken_data, 1e-4, 1 - 1e-4)
+    noise = jax.random.normal(rngs.evaluation())
+    broken_data = x * mask + (1 - mask) * noise_scale * noise
+    if clamp:
+        broken_data = jnp.clip(broken_data, 1e-4, 1 - 1e-4)
     return broken_data, mask
+
+# def corruption(x, type_='ebm', noise_scale=0.3):
+#     assert type_ in ['ebm', 'flow']
+#     # mask=1 if the pixel is visible
+#     mask = torch.zeros_like(x)
+#     if type_ == 'ebm':
+#         # Corrupt the rows 0, 2, 4, ....
+#         mask[..., torch.arange(0, mask.shape[-2], step=2), :] = 1
+#     elif type_ == 'flow':
+#         # Corrupt the lower part
+#         mask[..., :mask.shape[-2] // 2, :] = 1
+#     broken_data = x * mask + (1 - mask) * noise_scale * torch.randn_like(x)
+#     broken_data = torch.clamp(broken_data, 1e-4, 1 - 1e-4)
+#     return broken_data, mask
 
 
 transform = transforms.Compose([
@@ -185,3 +201,33 @@ def get_sigmas(config):
         sigmas = sigmas.astype(jnp.bfloat16)
 
     return sigmas
+
+def mkdir(path):
+    if not os.path.exists(path):
+        os.makedirs(path)
+
+def save_img(img:jnp.ndarray, dir, im_name, grid=(1, 1)):
+    if jax.process_index() != 0:
+        return
+    assert img.shape[0] == grid[0] * grid[1]
+    assert im_name.endswith('.png')
+    mkdir(dir)
+    img = np.array(img)
+    
+    N, H, W, C = img.shape
+    
+    canvas = np.zeros((H * grid[0], W * grid[1], C), dtype=img.dtype)
+    
+    for idx in range(N):
+        i = idx // grid[1]
+        j = idx % grid[1]
+        canvas[i*H:(i+1)*H, j*W:(j+1)*W, :] = img[idx]
+    
+    if C == 1:
+        canvas = canvas.squeeze(axis=-1) 
+        pil_img = Image.fromarray(canvas, mode='L')
+    else:
+        pil_img = Image.fromarray(canvas)
+    
+    img_path = os.path.join(dir, im_name)
+    pil_img.save(img_path)
