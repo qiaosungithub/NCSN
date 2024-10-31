@@ -6,7 +6,7 @@ training:
     eval_batch_size: 1024
     log_per_step: 1
     wandb: False
-    checkpoint_per_epoch: 1
+    checkpoint_per_epoch: 1000
     # load_from: /kmh-nfs-ssd-eu-mount/code/qiao/NCSN/sqa_NCSN/code/fake_tmp
 model:
     name: NCSNv2_base

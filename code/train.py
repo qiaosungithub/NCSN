@@ -26,7 +26,6 @@ from utils.display_utils import display_model
 from functools import partial
 from flax.training.train_state import TrainState as FlaxTrainState
 import flax.nnx as nn
-from kaiming_utils.info_util import print_params
 from langevin import langevin, langevin_masked
 from 数据集 import create_split, prepare_batch_data_sqa
 from train_step_sqa import train_step_sqa
@@ -372,6 +371,11 @@ def train_and_evaluate(
 
   log_for_0('config.batch_size: {}'.format(training_config.batch_size))
 
+  print("save dir: ", sampling_config.save_dir)
+  if sampling_config.save_dir is None:
+    sampling_config.save_dir = os.getcwd() + "/images/"
+  log_for_0(f"save directory: {sampling_config.save_dir}")
+
   ########### Create DataLoaders ###########
   if training_config.batch_size % jax.process_count() > 0:
     raise ValueError('Batch size must be divisible by the number of processes')
@@ -578,9 +582,9 @@ def train_and_evaluate(
     # NOTE: when saving checkpoint, should sync batch stats first.
     state = sync_batch_stats(state)
     if (epoch + 1) % training_config.checkpoint_per_epoch == 0:
-      pass
-      # # if index == 0:
-      # save_checkpoint(state, workdir)
+      # pass
+      # if index == 0:
+      save_checkpoint(state, workdir)
     if epoch == training_config.num_epochs - 1:
       state = state.replace(params=model_avg)
 
