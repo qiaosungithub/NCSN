@@ -322,24 +322,24 @@ class RefineBlock(nn.Module):
         self.crp = CRPBlock(features, 2, act, maxpool=maxpool, spec_norm=spec_norm, rngs=rngs)
 
     def __call__(self, xs, output_shape):
-        print("in Refine Block ________________________________")
+        # print("in Refine Block ________________________________")
         assert isinstance(xs, tuple) or isinstance(xs, list)
-        for x in xs: print("input shape:", x.shape)
+        # for x in xs: print("input shape:", x.shape)
         hs = []
         for i in range(len(xs)):
             h = self.adapt_convs[i](xs[i])
             hs.append(h)
-            print("output shape:", h.shape)
+            # print("output shape:", h.shape)
 
         if self.n_blocks > 1:
             h = self.msf(hs, output_shape)
-            print("MSF output shape:", h.shape)
+            # print("MSF output shape:", h.shape)
         else:
             h = hs[0]
 
         h = self.crp(h)
         h = self.output_convs(h)
-        print("output shape:", h.shape)
+        # print("output shape:", h.shape)
 
         return h
 

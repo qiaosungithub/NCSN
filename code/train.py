@@ -125,21 +125,21 @@ def sample_step(state:NNXTrainState, rng_init, sigmas, config, epoch):
   log_for_0(f"start generating samples for epoch {epoch}")
   output = langevin(
     state,
-    shape=(64, 1, 28, 28),
+    shape=(64, 28, 28, 1), # remember that the shape is (bs, h, w, c)
     sigmas=sigmas,
     eps=config.eps,
     T=config.T,
     rngs=rng_init,
     whole_process=False,
     clamp=False,
-    verbose=True # we will set to False later
+    verbose=False # we will set to False later
   )
   dir=config.save_dir + "generated/"
   save_img(output, dir, im_name=f"{epoch}.png", grid=(8, 8))
 
   _, all_samples = langevin(
     state,
-    shape=(10, 1, 28, 28),
+    shape=(10, 28, 28, 1),
     sigmas=sigmas,
     eps=config.eps,
     T=config.T,
@@ -157,16 +157,22 @@ def sample_step(state:NNXTrainState, rng_init, sigmas, config, epoch):
 def denoising_eval_step(state:NNXTrainState, rng_init, sigmas, config, ground_truth, type_, epoch):
 
   assert type_ in {"even", "lower"}
-  ground_truth_0=ground_truth[64:74]
-  ground_truth = ground_truth[:64]
+  num_replicas = jax.local_device_count()
+  assert 64 % num_replicas == 0
+  local_batch_size = 64 // num_replicas
+
+  ground_truth_1 = ground_truth[:, :local_batch_size] # shape (num_replicas, local_bs, 28, 28, 1)
+  # print("ground_truth_1.shape: ", ground_truth_1.shape)
   log_for_0(f"evaluating denoising for epoch {epoch}")
   corrupted, mask = corruption(
-    ground_truth, 
+    ground_truth_1, 
     type_=type_, 
     rngs=rng_init, 
     noise_scale=1, 
     clamp=False
   )
+  # print("corrupted.shape: ", corrupted.shape) # (8, 8, 28, 28, 1)
+  # print("mask.shape: ", mask.shape) # (8, 8, 28, 28, 1)
   # denoising process
   recovered = langevin_masked(
     state,
@@ -178,16 +184,22 @@ def denoising_eval_step(state:NNXTrainState, rng_init, sigmas, config, ground_tr
     rngs=rng_init,
     whole_process=False,
     clamp=False,
-    verbose=True # we will set to False later
+    verbose=False # we will set to False later
   )
   dir=config.save_dir + f"denoising_{type_}/{epoch}"
   save_img(recovered, dir, im_name=f"recovered.png", grid=(8, 8))
-  save_img(ground_truth, dir, im_name=f"groundtruth.png", grid=(8, 8))
+  save_img(ground_truth_1, dir, im_name=f"groundtruth.png", grid=(8, 8))
   save_img(corrupted, dir, im_name=f"corrupted.png", grid=(8, 8))
 
   # calculate mse
-  mse = jnp.mean((recovered - ground_truth) ** 2)
+  mse = jnp.mean((recovered - ground_truth_1) ** 2)
+  log_for_0(f"mse for epoch {epoch} and type {type_}: {mse}")
+  log_for_0(f"saving recovering process for epoch {epoch} and type {type_}")
 
+  # save the whole process
+  ground_truth_0=ground_truth[0, local_batch_size:local_batch_size+10]
+  assert ground_truth_0.shape[0] == 10, "eval batch size is too small"
+  ground_truth_0 = jnp.tile(ground_truth_0.reshape(1, 10, 28, 28, 1), (num_replicas, 1, 1, 1, 1))
   corrupted, mask = corruption(
     ground_truth_0, 
     type_=type_, 
@@ -345,7 +357,7 @@ def train_and_evaluate(
 
   ########### Initialize ###########
   rank = index = jax.process_index()
-  print("rank: ", rank) # we hope this is 0-31
+  # print("rank: ", rank) # we hope this is 0-31
   training_config = config.training
   model_config = config.model 
   dataset_config = config.dataset
@@ -566,8 +578,9 @@ def train_and_evaluate(
     # NOTE: when saving checkpoint, should sync batch stats first.
     state = sync_batch_stats(state)
     if (epoch + 1) % training_config.checkpoint_per_epoch == 0:
-        # if index == 0:
-        save_checkpoint(state, workdir)
+      pass
+      # # if index == 0:
+      # save_checkpoint(state, workdir)
     if epoch == training_config.num_epochs - 1:
       state = state.replace(params=model_avg)
 
@@ -580,7 +593,7 @@ def train_and_evaluate(
       sample_step(state, rngs, sigmas, sampling_config, epoch)
       for n_eval_batch, eval_batch in enumerate(eval_loader):
         images = eval_batch[0].reshape(-1, config.dataset.channels, config.dataset.image_size, config.dataset.image_size)
-        ground_truth = prepare_batch_data_sqa(images)
+        ground_truth = prepare_batch_data_sqa(images) # 
         if n_eval_batch == 0:
           mse_lower = denoising_eval_step(state, rngs, sigmas, sampling_config, ground_truth, "lower", epoch)
         if n_eval_batch == 1:

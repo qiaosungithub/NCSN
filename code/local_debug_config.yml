@@ -3,7 +3,7 @@ training:
     learning_rate: 0.0001
     num_epochs: 6
     batch_size: 1024
-    eval_batch_size: 128
+    eval_batch_size: 1024
     log_per_step: 1
     wandb: False
     checkpoint_per_epoch: 1

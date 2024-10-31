@@ -139,10 +139,10 @@ class NCSNv2(nn.Module):
         # print("layer3 square mean: ", torch.mean(layer3 ** 2))
         layer4 = self.res4(layer3) # shape (bs, 14, 14, 2ngf)
 
-        print("layer1 shape: ", layer1.shape, flush=True)
-        print("layer2 shape: ", layer2.shape, flush=True)
-        print("layer3 shape: ", layer3.shape, flush=True)
-        print("layer4 shape: ", layer4.shape, flush=True)
+        # print("layer1 shape: ", layer1.shape, flush=True)
+        # print("layer2 shape: ", layer2.shape, flush=True)
+        # print("layer3 shape: ", layer3.shape, flush=True)
+        # print("layer4 shape: ", layer4.shape, flush=True)
         # show("layer4")
         # print("layer4 square mean: ", torch.mean(layer4 ** 2))
 
@@ -156,10 +156,10 @@ class NCSNv2(nn.Module):
         # show("ref4")
         # print("ref4 square mean: ", torch.mean(output ** 2))
 
-        print("ref1 shape: ", ref1.shape, flush=True)
-        print("ref2 shape: ", ref2.shape, flush=True)
-        print("ref3 shape: ", ref3.shape, flush=True)
-        print("output (ref4) shape: ", output.shape, flush=True)
+        # print("ref1 shape: ", ref1.shape, flush=True)
+        # print("ref2 shape: ", ref2.shape, flush=True)
+        # print("ref3 shape: ", ref3.shape, flush=True)
+        # print("output (ref4) shape: ", output.shape, flush=True)
 
         output = self.normalizer(output)
         output = self.activation(output)

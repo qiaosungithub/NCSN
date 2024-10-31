@@ -1,6 +1,6 @@
 import jax
 import os
-from math import sqrt
+# from math import sqrt
 import jax.numpy as jnp
 from utils.utils import save_img
 from jax import random
@@ -11,9 +11,9 @@ from jax import lax
 def apply_langevin(state, x, alpha, noise, indices, mask=None):
     grad, _, _ = state.apply_fn(state.graphdef, state.params, state.rng_states, state.batch_stats, state.useless_variable_state, False, x, indices)
     if mask is not None:
-        x = x + (alpha / 2 * grad + sqrt(alpha) * noise) * mask
+        x = x + (alpha / 2 * grad + jnp.sqrt(alpha) * noise) * mask
     else:
-        x = x + alpha / 2 * grad + sqrt(alpha) * noise
+        x = x + alpha / 2 * grad + jnp.sqrt(alpha) * noise
     return x, grad
 
 fast_apply_langevin = jax.pmap(
@@ -26,9 +26,10 @@ def langevin(state, shape, sigmas, eps, T, rngs, whole_process=False, clamp=Fals
     rngs: a Rng class instance
     """
 
+    assert len(shape) == 4
     # it's better not to clamp
     bs = shape[0]
-    x = jax.random.normal(rngs.evaluation()+jax.process_index(), shape=shape)
+    x = jax.random.normal(rngs.evaluation(), shape=shape) # we only need 1 tpu to calculate
     if whole_process:
         assert bs <= 20, "batch size should be less than 20 if you want to save the whole process"
         all_samples = []
@@ -37,18 +38,36 @@ def langevin(state, shape, sigmas, eps, T, rngs, whole_process=False, clamp=Fals
         sigma = sigmas[i]
         alpha = eps * (sigma ** 2) / (sigmas[-1] ** 2)
         indices = i * jnp.ones(bs, dtype=jnp.int32)
+        assert indices.shape == (bs,)
         for t in range(T):
-            noise = jax.random.normal(rngs.evaluation()+jax.process_index(), shape=x.shape)
-            assert indices.shape == ([bs,])
-            x, grad = fast_apply_langevin(state, x, alpha, noise, indices)
+            noise = jax.random.normal(rngs.evaluation(), shape=x.shape)
+            # print("indices: ", indices)
+            # print("indices.shape", indices.shape)
+            # replicate the variables to all devices
+            num_replicas = jax.local_device_count()
+            xr = jnp.tile(x.reshape(1, *x.shape), (num_replicas, 1, 1, 1, 1))
+            alphar = alpha * jnp.ones(num_replicas)
+            noiser = jnp.tile(noise.reshape(1, *noise.shape), (num_replicas, 1, 1, 1, 1))
+            indicesr = jnp.tile(indices.reshape(1, *indices.shape), (num_replicas, 1))
+
+            # print("xr.shape", xr.shape)
+            # print("alphar.shape", alphar.shape)
+            # print("noiser.shape", noiser.shape)
+            # print("indicesr.shape", indicesr.shape)
+
+            x, grad = fast_apply_langevin(state, xr, alphar, noiser, indicesr)
+            # print("x.shape", x.shape)
+            # print("grad.shape", grad.shape)
+            x = x[0]
+            grad = grad[0]
             if clamp:
                 x = jnp.clip(x, 0, 1)
             if verbose:
-                grad_norm = jnp.linalg.norm(grad.view(bs, -1), dim=1).mean()
-                image_norm = jnp.linalg.norm(x.view(bs, -1), dim=1).mean()
-                noise_norm = jnp.linalg.norm(noise.view(noise.shape[0], -1), dim=-1).mean()
+                grad_norm = jnp.linalg.norm(grad.reshape(bs, -1), axis=1).mean()
+                image_norm = jnp.linalg.norm(x.reshape(bs, -1), axis=1).mean()
+                noise_norm = jnp.linalg.norm(noise.reshape(noise.shape[0], -1), axis=-1).mean()
                 snr = jnp.sqrt(alpha) * grad_norm / noise_norm # signal to noise ratio
-                grad_mean_norm = jnp.linalg.norm(grad.mean(dim=0).view(-1)) ** 2 * sigma ** 2
+                grad_mean_norm = jnp.linalg.norm(grad.mean(axis=0).reshape(-1)) ** 2 * sigma ** 2
                 if jax.process_index() == 0:
                     print("level: {}, step_size: {}, grad_norm: {}, image_norm: {}, snr: {}, grad_mean_norm: {}".format(
                                     i, alpha, grad_norm.item(), image_norm.item(), snr.item(), grad_mean_norm.item()))
@@ -57,67 +76,65 @@ def langevin(state, shape, sigmas, eps, T, rngs, whole_process=False, clamp=Fals
 
     if whole_process:
         all_samples = jnp.stack(all_samples, axis=0)
-        all_samples = all_samples.reshape(-1, *shape[2:])
+        all_samples = all_samples.reshape(-1, *shape[1:])
         return x, all_samples
     else:
         return x
 
-    if save:
-        assert x.shape[0] == 10
-        # assert len(sigmas) == 10
-        assert epochs is not None
-        if time_str is not None:
-            save_dir = f'./NCSN/denoising_process/{time_str}/'
-        else:
-            save_dir = './NCSN/denoising_process/'
-        filename = '{:>03d}.png'.format(epochs)
-        if not os.path.exists(save_dir):
-            os.makedirs(save_dir)
-        # concatenate all samples
-        all_samples = all_samples[:10]
-        all_samples = torch.cat(all_samples, dim=0)
-        # print(all_samples.shape)
-        assert all_samples.shape == torch.Size([100, 1, 28, 28])
-        # save the image
-        grid = torchvision.utils.make_grid(all_samples, nrow=10, padding=2, pad_value=1)
-        torchvision.utils.save_image(grid, os.path.join(save_dir, filename))
-
-    return x
-
 def langevin_masked(state, x, sigmas, eps, T, rngs, mask, whole_process=False, clamp=False, verbose=False):
     """
+    INPUT---
     rngs: a Rng class instance
+    x: with shape (num_replicas, bs, h, w, c)
+    mask: with shape (num_replicas, bs, h, w, c)
+    OUTPUT---
+    x: with shape (num_replicas, bs, h, w, c)
+    all_samples: with shape (bs * n_noise_levels, h, w, c)
+    note: if we want to save the whole process, x is the same for each replica, with local_bs = 10; otherwise we have 64 samples
     """
 
     # it's better not to clamp
-    bs = x.shape[0]
+    print("--------------------in langevin_masked----------------------")
+    num_replicas = x.shape[0]
+    local_bs = x.shape[1]
+    bs = num_replicas * local_bs
+    assert mask.shape == x.shape
     if whole_process:
-        assert bs <= 20, "batch size should be less than 20 if you want to save the whole process"
+        assert local_bs <= 20, "batch size should be less than 20 if you want to save the whole process"
         all_samples = []
     
     for i in range(len(sigmas)):
         sigma = sigmas[i]
         alpha = eps * (sigma ** 2) / (sigmas[-1] ** 2)
-        indices = i * jnp.ones(bs, dtype=jnp.int32)
+        indices = i * jnp.ones((num_replicas, local_bs), dtype=jnp.int32)
         for t in range(T):
-            noise = jax.random.normal(rngs.evaluation()+jax.process_index(), shape=x.shape)
-            assert indices.shape == ([bs,])
-            x, grad = fast_apply_langevin(state, x, alpha, noise, indices, mask=mask)
+            noise = jax.random.normal(rngs.evaluation(), shape=x.shape)
+            # replicate the variables to all devices
+            alphar = alpha * jnp.ones(num_replicas)
+
+            x, grad = fast_apply_langevin(state, x, alphar, noise, indices, mask=mask)
+
             if clamp:
                 x = jnp.clip(x, 0, 1)
             if verbose:
-                grad_norm = jnp.linalg.norm(grad.view(bs, -1), dim=1).mean()
-                image_norm = jnp.linalg.norm(x.view(bs, -1), dim=1).mean()
-                noise_norm = jnp.linalg.norm(noise.view(noise.shape[0], -1), dim=-1).mean()
+                grad_norm = jnp.linalg.norm(grad.reshape(bs, -1), axis=1).mean()
+                image_norm = jnp.linalg.norm(x.reshape(bs, -1), axis=1).mean()
+                noise_norm = jnp.linalg.norm(noise.reshape(noise.shape[0], -1), axis=-1).mean()
                 snr = jnp.sqrt(alpha) * grad_norm / noise_norm # signal to noise ratio
-                grad_mean_norm = jnp.linalg.norm(grad.mean(dim=0).view(-1)) ** 2 * sigma ** 2
+                grad_mean_norm = jnp.linalg.norm(grad.mean(axis=0).reshape(-1)) ** 2 * sigma ** 2
                 if jax.process_index() == 0:
                     print("level: {}, step_size: {}, grad_norm: {}, image_norm: {}, snr: {}, grad_mean_norm: {}".format(
                                     i, alpha, grad_norm.item(), image_norm.item(), snr.item(), grad_mean_norm.item()))
         if whole_process:
-            all_samples.append(x)
+            # note that all device generate the same image
+            # print("x.shape", x.shape)
+            # print("x[0].shape", x[0].shape)
+            all_samples.append(x[0])
 
     if whole_process:
+        all_samples = jnp.stack(all_samples, axis=0)
+        all_samples = all_samples.reshape(-1, *x.shape[2:])
+        # print("all_samples.shape", all_samples.shape)
         return x, all_samples
     else:
         return x

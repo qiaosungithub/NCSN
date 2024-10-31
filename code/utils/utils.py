@@ -56,14 +56,18 @@ def rescale(x, lo, hi):
     return x
 
 def corruption(x, type_, rngs, noise_scale=1, clamp=False):
+    """
+    The function accepts x for either shape (B, H, W, C) or (B1, B2, H, W, C)
+    """
     # mask=1 if the pixel is visible
-    mask = jnp.zeros_like(x)
+    mask = np.zeros_like(x)
     if type_ == 'even':
         # Corrupt the rows 0, 2, 4, ....
-        mask[..., jnp.arange(0, mask.shape[-2], step=2), :] = 1
+        mask[..., np.arange(0, mask.shape[-2], step=2), :] = 1
     elif type_ == 'lower':
         # Corrupt the lower part
         mask[..., :mask.shape[-2] // 2, :] = 1
+    mask = jnp.array(mask)
     noise = jax.random.normal(rngs.evaluation())
     broken_data = x * mask + (1 - mask) * noise_scale * noise
     if clamp:
@@ -225,6 +229,8 @@ def mkdir(path):
 def save_img(img:jnp.ndarray, dir, im_name, grid=(1, 1)):
     if jax.process_index() != 0:
         return
+    if len(img.shape) > 4:
+        img = img.reshape(-1, *img.shape[2:])
     assert img.shape[0] == grid[0] * grid[1]
     assert im_name.endswith('.png')
     mkdir(dir)

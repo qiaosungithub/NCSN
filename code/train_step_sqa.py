@@ -48,18 +48,29 @@ fast_train_step_compute = jax.pmap(
   axis_name='batch',
 )
 
+# def train_step_sqa(state:NNXTrainState, images, rng, sigmas):
+#   """Perform a single training step."""
+
+#   # ResNet has no dropout; but maintain rng_dropout for future usage
+#   # rng_step = random.fold_in(rng_init(), state.step)
+#   # rng_device = random.fold_in(rng_step, lax.axis_index(axis_name='batch'))
+#   # rng, _ = random.split(rng_device)
+#   # print("images.shape", images.shape)
+
+#   sigma_indices = random.randint(rng(), (images.shape[0], images.shape[1]), 0, len(sigmas))
+
+#   noise = random.normal(rng(), images.shape)
+#   assert sigmas.shape == (len(sigmas),)
+#   assert sigma_indices.shape == (images.shape[0], images.shape[1])
+#   sigmas = sigmas.reshape(1, *sigmas.shape)
+#   sigmas = jnp.tile(sigmas, (images.shape[0], 1))
+
+#   new_state, metrics = fast_train_step_compute(state, images, sigmas, sigma_indices, noise)
+
+#   return new_state, metrics
+
 def train_step_sqa(state:NNXTrainState, images, rng, sigmas):
-  """Perform a single training step."""
+  """Perform a single training step. FAKE VERSION FOR DEBUG"""
+  metrics = {"loss": 0.0}
 
-  # ResNet has no dropout; but maintain rng_dropout for future usage
-#   rng_step = random.fold_in(rng_init(), state.step)
-#   rng_device = random.fold_in(rng_step, lax.axis_index(axis_name='batch'))
-#   rng, _ = random.split(rng_device)
-
-  sigma_indices = random.randint(rng(), (images.shape[0],), 0, len(sigmas))
-
-  noise = random.normal(rng(), images.shape)
-
-  new_state, metrics = fast_train_step_compute(state, images, sigmas, sigma_indices, noise)
-
-  return new_state, metrics
+  return state, metrics
