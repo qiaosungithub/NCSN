@@ -22,7 +22,7 @@ from torch.utils.data import DataLoader
 from utils.utils import train_set_, val_set_, get_sigmas, save_img, corruption
 import ncsnv2
 
-from utils.display_utils import display_model
+from utils.display_utils import show_dict, display_model
 from functools import partial
 from flax.training.train_state import TrainState as FlaxTrainState
 import flax.nnx as nn
@@ -117,7 +117,7 @@ def create_learning_rate_fn(
   return lr_schedule
 
 
-def sample_step(state:NNXTrainState, rng_init, sigmas, config, epoch):
+def sample_step(state:NNXTrainState, rng_init, sigmas, config, epoch, verbose=False):
   '''
   config: is the sampling config
   '''
@@ -131,7 +131,7 @@ def sample_step(state:NNXTrainState, rng_init, sigmas, config, epoch):
     rngs=rng_init,
     whole_process=False,
     clamp=False,
-    verbose=False # we will set to False later
+    verbose=verbose # we will set to False later
   )
   dir=config.save_dir + "generated/"
   save_img(output, dir, im_name=f"{epoch}.png", grid=(8, 8))
@@ -145,7 +145,7 @@ def sample_step(state:NNXTrainState, rng_init, sigmas, config, epoch):
     rngs=rng_init,
     whole_process=True,
     clamp=False,
-    verbose=False
+    verbose=verbose
   )
   dir=config.save_dir + "sample_process/"
   g = all_samples.shape[0]
@@ -234,7 +234,8 @@ def restore_checkpoint(state, workdir):
 def save_checkpoint(state, workdir):
   state = jax.device_get(jax.tree_util.tree_map(lambda x: x[0], state))
   step = int(state.step)
-  log_for_0('Saving checkpoint step %d.', step)
+  if jax.process_index() == 0:
+    log_for_0('Saving checkpoint step %d.', step)
   checkpoints.save_checkpoint_multiprocess(workdir, state, step, keep=2)
 
 
@@ -362,7 +363,7 @@ def train_and_evaluate(
   dataset_config = config.dataset
   sampling_config = config.sampling
   if rank == 0 and training_config.wandb:
-    wandb.init(project='deit_nnx', dir=workdir)
+    wandb.init(project='sqa_NCSN', dir=workdir)
     wandb.config.update(config.to_dict())
   global_seed(training_config.seed)
 
@@ -371,7 +372,7 @@ def train_and_evaluate(
 
   log_for_0('config.batch_size: {}'.format(training_config.batch_size))
 
-  print("save dir: ", sampling_config.save_dir)
+  # print("save dir: ", sampling_config.save_dir)
   if sampling_config.save_dir is None:
     sampling_config.save_dir = workdir + "/images/"
   log_for_0(f"save directory: {sampling_config.save_dir}")
@@ -423,7 +424,7 @@ def train_and_evaluate(
     config=config
   )
   model = model_init_fn(rngs=rngs)
-  display_model(model)
+  show_dict(display_model(model))
 
   ########### Create LR FN ###########
   # learning_rate_fn = create_learning_rate_fn(config, base_learning_rate, steps_per_epoch)
@@ -573,7 +574,8 @@ def train_and_evaluate(
                         # 'lr': learning_rate_fn(step), 
                         'step': step, 
                         'step_per_sec': step_per_sec})
-            log_for_0('epoch: {} step: {} loss: {}, step_per_sec: {}'.format(ep, step, loss_to_display, step_per_sec))
+            # log_for_0('epoch: {} step: {} loss: {}, step_per_sec: {}'.format(ep, step, loss_to_display, step_per_sec))
+            log_for_0('step: {} loss: {}, step_per_sec: {}'.format(step, loss_to_display, step_per_sec))
       if sampling_config.get('ema_decay'):
         # EMA
         model_avg = p_update_model_avg(model_avg, state.params)
@@ -593,16 +595,17 @@ def train_and_evaluate(
     if (epoch + 1) % training_config.eval_per_epoch == 0:
       log_for_0('Eval epoch {}...'.format(epoch))
       # sync batch statistics across replicas
-      state = sync_batch_stats(state)
+      eval_state = sync_batch_stats(state)
+      eval_state = eval_state.replace(params=model_avg)
       average_metrics = MyMetrics(reduction=Avger)
-      sample_step(state, rngs, sigmas, sampling_config, epoch)
+      sample_step(eval_state, rngs, sigmas, sampling_config, epoch)
       for n_eval_batch, eval_batch in enumerate(eval_loader):
         images = eval_batch[0].reshape(-1, config.dataset.channels, config.dataset.image_size, config.dataset.image_size)
         ground_truth = prepare_batch_data_sqa(images) # 
         if n_eval_batch == 0:
-          mse_lower = denoising_eval_step(state, rngs, sigmas, sampling_config, ground_truth, "lower", epoch)
+          mse_lower = denoising_eval_step(eval_state, rngs, sigmas, sampling_config, ground_truth, "lower", epoch)
         if n_eval_batch == 1:
-          mse_even = denoising_eval_step(state, rngs, sigmas, sampling_config, ground_truth, "even", epoch)
+          mse_even = denoising_eval_step(eval_state, rngs, sigmas, sampling_config, ground_truth, "even", epoch)
           break
         # if (n_eval_batch + 1) % config.log_per_step == 0:
         #   if index == 0:
@@ -613,7 +616,7 @@ def train_and_evaluate(
         # # print("metrics' labels shape:", metrics['labels'].shape)
         # assert metrics['labels'].shape[-1] == NUM_CLASSES
         # eval_metrics.append(metrics)
-      print("mse_lower: ", mse_lower)
+      # print("mse_lower: ", mse_lower)
       mse_lower = jnp.mean(mse_lower)
       mse_even = jnp.mean(mse_even)
 
@@ -629,3 +632,55 @@ def train_and_evaluate(
     wandb.finish()
 
   return state
+
+def just_evaluate(
+    config: ml_collections.ConfigDict, workdir: str
+  ):
+  ########### Initialize ###########
+  rank = index = jax.process_index()
+  log_for_0('Generating samples for workdir: {}'.format(workdir))
+  training_config = config.training
+  model_config = config.model 
+  dataset_config = config.dataset
+  sampling_config = config.sampling
+  dtype = jnp.bfloat16 if model_config.half_precision else jnp.float32
+  global_seed(training_config.seed)
+  sigmas = get_sigmas(sampling_config)
+
+  ########### Create Model ###########
+  model_cls = getattr(ncsnv2, model_config.name)
+  rngs = nn.Rngs(training_config.seed, params=training_config.seed + 114, dropout=training_config.seed + 514, evaluation=training_config.seed + 1919)
+  dtype = get_dtype(model_config.half_precision)
+  model_init_fn = partial(
+    model_cls, 
+    dtype=dtype, 
+    ngf=model_config.ngf, 
+    n_noise_levels=sampling_config.n_noise_levels, 
+    config=config
+  )
+  model = model_init_fn(rngs=rngs)
+  display_model(model)
+
+  ########### Create LR FN ###########
+  # base_lr = training_config.learning_rate * training_config.batch_size / 256.
+  learning_rate_fn = training_config.learning_rate
+
+  ########### Create Train State ###########
+  state = create_train_state(model, training_config, learning_rate_fn)
+  assert training_config.get('load_from',None) is not None, 'Must provide a checkpoint path for evaluation'
+  if not os.path.isabs(training_config.load_from):
+    raise ValueError('Checkpoint path must be absolute')
+  if not os.path.exists(training_config.load_from):
+    raise ValueError('Checkpoint path {} does not exist'.format(training_config.load_from))
+  state = restore_checkpoint(model_init_fn ,state, training_config.load_from)
+  state_step = int(state.step)
+  state = ju.replicate(state) # NOTE: this doesn't split the RNGs automatically, but it is an intended behavior
+
+  ########### Gen ###########
+  log_for_0('Eval...')
+  # sync batch statistics across replicas
+  eval_state = sync_batch_stats(state)
+  average_metrics = MyMetrics(reduction=Avger)
+  sample_step(eval_state, rngs, sigmas, sampling_config, epoch="eval", verbose=True)
+
+  jax.random.normal(jax.random.key(0), ()).block_until_ready()

@@ -54,4 +54,5 @@ def count_params(model: nn.Module) -> dict:
     }
 
 def show_dict(d):
-    print(json.dumps(d, indent=2))
+    if jax.process_index() == 0:
+        print(json.dumps(d, indent=2), flush=True)

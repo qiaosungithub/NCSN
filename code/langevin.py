@@ -70,7 +70,7 @@ def langevin(state, shape, sigmas, eps, T, rngs, whole_process=False, clamp=Fals
                 grad_mean_norm = jnp.linalg.norm(grad.mean(axis=0).reshape(-1)) ** 2 * sigma ** 2
                 if jax.process_index() == 0:
                     print("level: {}, step_size: {}, grad_norm: {}, image_norm: {}, snr: {}, grad_mean_norm: {}".format(
-                                    i, alpha, grad_norm.item(), image_norm.item(), snr.item(), grad_mean_norm.item()))
+                                    i, alpha, grad_norm.item(), image_norm.item(), snr.item(), grad_mean_norm.item()), flush=True)
         if whole_process:
             all_samples.append(x)
 
@@ -124,7 +124,7 @@ def langevin_masked(state, x, sigmas, eps, T, rngs, mask, whole_process=False, c
                 grad_mean_norm = jnp.linalg.norm(grad.mean(axis=0).reshape(-1)) ** 2 * sigma ** 2
                 if jax.process_index() == 0:
                     print("level: {}, step_size: {}, grad_norm: {}, image_norm: {}, snr: {}, grad_mean_norm: {}".format(
-                                    i, alpha, grad_norm.item(), image_norm.item(), snr.item(), grad_mean_norm.item()))
+                                    i, alpha, grad_norm.item(), image_norm.item(), snr.item(), grad_mean_norm.item()), flush=True)
         if whole_process:
             # note that all device generate the same image
             # print("x.shape", x.shape)
