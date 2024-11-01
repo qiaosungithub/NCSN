@@ -373,7 +373,7 @@ def train_and_evaluate(
 
   print("save dir: ", sampling_config.save_dir)
   if sampling_config.save_dir is None:
-    sampling_config.save_dir = os.getcwd() + "/images/"
+    sampling_config.save_dir = workdir + "/images/"
   log_for_0(f"save directory: {sampling_config.save_dir}")
 
   ########### Create DataLoaders ###########
@@ -463,7 +463,8 @@ def train_and_evaluate(
       # TODO: this function currently emits lots of "background messages". Try to suppress them
       state = jax.device_get(jax.tree_util.tree_map(lambda x: x[0], state))
       step = int(state.step)
-      log_for_0('Saving checkpoint to {}, with step {}'.format(workdir, step))
+      if jax.process_index() == 0:
+        log_for_0('Saving checkpoint to {}, with step {}'.format(workdir, step))
       merged_params: nn.State = state.params
       # 不能把rng merge进去！
       # if len(state.rng_states) > 0:

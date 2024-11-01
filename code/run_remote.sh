@@ -39,7 +39,7 @@ python3 main.py \
     --workdir=${LOGDIR} \
     --mode=remote_run \
     --config=configs/load_config.py:remote_run \
-    --config.dataset.root='/${DATA_ROOT}/data/imagenet' \
+    --config.dataset.root=${MNIST} \
 " 2>&1 | tee -a $LOGDIR/output.log
 
 ############# No need to modify [END] #############

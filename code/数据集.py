@@ -32,7 +32,8 @@ def create_split(
   """
   rank = jax.process_index()
   if split == 'train':
-    logging.info(dataset)
+    if rank == 0:
+      logging.info(dataset)
     # sqa's copy from deit's sampler, which implements the RASampler
 
     sampler = DistributedSampler(

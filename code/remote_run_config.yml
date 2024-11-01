@@ -1,7 +1,7 @@
 # Put your `run_remote.sh` configs in this YAML file
 training:
     learning_rate: 0.0001
-    num_epochs: 6
+    num_epochs: 100
     batch_size: 1024
     eval_batch_size: 1024
     log_per_step: 5

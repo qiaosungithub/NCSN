@@ -3,11 +3,13 @@ source config.sh
 
 if [ -z "$OWN_CONDA_ENV_NAME" ]; then
     echo "Please set your own config.sh. See README for reference"
+    sleep 60
     exit 1
 fi
 
 if [ -z "$TASKNAME" ]; then
     echo "Please set your own config.sh. See README for reference"
+    sleep 60
     exit 1
 fi
 
@@ -15,10 +17,10 @@ fi
 
 ############## TPU VMs ##############
 
-# export VM_NAME=kmh-tpuvm-v2-32-1
+export VM_NAME=kmh-tpuvm-v2-32-1
 # export VM_NAME=kmh-tpuvm-v2-32-2
 # export VM_NAME=kmh-tpuvm-v2-32-3
-export VM_NAME=kmh-tpuvm-v3-32-1
+# export VM_NAME=kmh-tpuvm-v3-32-1
 
 #####################################
 
