@@ -6,6 +6,7 @@ import zhh.F as F
 import os
 import numpy as np
 from PIL import Image
+import matplotlib.pyplot as plt
 import jax
 import torch
 from functools import partial
@@ -247,9 +248,6 @@ def save_img(img:jnp.ndarray, dir, im_name, grid=(1, 1)):
     
     if C == 1:
         canvas = canvas.squeeze(axis=-1) 
-        pil_img = Image.fromarray(canvas, mode='L')
-    else:
-        pil_img = Image.fromarray(canvas)
     
     img_path = os.path.join(dir, im_name)
-    pil_img.save(img_path)
+    plt.imsave(img_path, canvas, cmap='gray' if C == 1 else None)

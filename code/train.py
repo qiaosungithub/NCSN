@@ -576,20 +576,26 @@ def train_and_evaluate(
       # import matplotlib.pyplot as plt
       # import numpy as np
       # import os
-      # print(batch["image"].shape)
+      # print(images.shape)
 
       # # save batch["image"] to ./images/{epoch}/i.png
       # rank = jax.process_index()
 
       # if os.path.exists(f"/kmh-nfs-us-mount/staging/sqa/images/{n_batch}/{rank}") == False:
       #   os.makedirs(f"/kmh-nfs-us-mount/staging/sqa/images/{n_batch}/{rank}")
-      # for i in range(batch["image"][0].shape[0]):
+      # if os.path.exists(f"/kmh-nfs-ssd-eu-mount/code/qiao/NCSN/sqa_NCSN/images/{n_batch}/{rank}") == False:
+      #   os.makedirs(f"/kmh-nfs-ssd-eu-mount/code/qiao/NCSN/sqa_NCSN/images/{n_batch}/{rank}")
+      # for i in range(images[0].shape[0]):
       #   # print the max and min of the image
-      #   # print(f"max: {np.max(batch['image'][0][i])}, min: {np.min(batch['image'][0][i])}")
+      #   # print(f"max: {np.max(images[0][i])}, min: {np.min(images[0][i])}")
+      #   img_test = images[0][:100]
+      #   save_img(img_test, f"/kmh-nfs-ssd-eu-mount/code/qiao/NCSN/sqa_NCSN/images/{n_batch}/{rank}", im_name=f"{i}.png", grid=(10, 10))
+      #   break
       #   # use the max and min to normalize the image to [0, 1]
-      #   img = batch["image"][0][i]
-      #   img = (img - np.min(img)) / (np.max(img) - np.min(img))
-      #   plt.imsave(f"/kmh-nfs-us-mount/staging/sqa/images/{n_batch}/{rank}/{i}.png", img)
+      #   img = images[0][i]
+      #   # img = (img - np.min(img)) / (np.max(img) - np.min(img))
+      #   img = img.squeeze(-1)
+      #   plt.imsave(f"/kmh-nfs-us-mount/staging/sqa/images/{n_batch}/{rank}/{i}.png", img, cmap='gray') # if MNIST, add cmap='gray'
       #   # if i>6: break
 
       # print(f"saving images for n_batch {n_batch}, done.")
