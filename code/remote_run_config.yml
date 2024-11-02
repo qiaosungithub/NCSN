@@ -8,6 +8,7 @@ training:
     wandb: True
     checkpoint_per_epoch: 1
     # checkpoint_per_epoch: 1000 # i.e. no checkpoint
+    # load_from: /kmh-nfs-us-mount/logs/sqa/sqa_NCSNv2/20241101_030317_2ml2nf_kmh-tpuvm-v2-32-1__b_lr_ep_torchvision_r50_eval/checkpoint_5684
 model:
     name: NCSNv2_base
     activation: elu
@@ -21,8 +22,8 @@ sampling:
     n_noise_levels: 75
     ema: True
     ema_decay: 0.999
-    eps: 0.00005
-    T: 5
+    eps: 0.0001
+    T: 10
     save_dir: null
 
 # NOTE: you cannot add more hierarchy structure without modifying default.py and load_config.py

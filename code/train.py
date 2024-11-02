@@ -227,17 +227,61 @@ def denoising_eval_step(state:NNXTrainState, rng_init, sigmas, config, ground_tr
   return mse
 
 
-def restore_checkpoint(state, workdir):
-  return checkpoints.restore_checkpoint(workdir, state)
+# def restore_checkpoint(state, workdir):
+#   return checkpoints.restore_checkpoint(workdir, state)
 
+def restore_checkpoint(model_init_fn, state, workdir):
+  abstract_model = nn.eval_shape(lambda: model_init_fn(rngs=nn.Rngs(0)))
+  rng_states = state.rng_states
+  abs_state = nn.state(abstract_model)
+  params, batch_stats, others = abs_state.split(nn.Param, nn.BatchStat, ...)
+  useful_abs_state = nn.State.merge(params, batch_stats)
+  fake_state = {
+    'mo_xing': useful_abs_state,
+    'you_hua_qi': state.opt_state,
+    'step': 0
+  }
+  loaded_state = checkpoints.restore_checkpoint(workdir, target=fake_state,orbax_checkpointer=checkpointer)
+  merged_params = loaded_state['mo_xing']
+  opt_state = loaded_state['you_hua_qi']
+  step = loaded_state['step']
+  params, batch_stats, _ = merged_params.split(nn.Param, nn.BatchStat, nn.VariableState)
+  return state.replace(
+    params=params,
+    rng_states=rng_states,
+    batch_stats=batch_stats,
+    opt_state=opt_state,
+    step=step
+  )
 
-def save_checkpoint(state, workdir):
+checkpointer = ocp.StandardCheckpointer()
+def _restore(ckpt_path, item, **restore_kwargs):
+  return ocp.StandardCheckpointer.restore(checkpointer, ckpt_path, target=item)
+setattr(checkpointer, 'restore', _restore)
+
+# def save_checkpoint(state, workdir):
+#   state = jax.device_get(jax.tree_util.tree_map(lambda x: x[0], state))
+#   step = int(state.step)
+#   if jax.process_index() == 0:
+#     log_for_0('Saving checkpoint step %d.', step)
+#   checkpoints.save_checkpoint_multiprocess(workdir, state, step, keep=2)
+
+def save_checkpoint(state:NNXTrainState, workdir):
   state = jax.device_get(jax.tree_util.tree_map(lambda x: x[0], state))
   step = int(state.step)
-  if jax.process_index() == 0:
-    log_for_0('Saving checkpoint step %d.', step)
-  checkpoints.save_checkpoint_multiprocess(workdir, state, step, keep=2)
-
+  log_for_0('Saving checkpoint to {}, with step {}'.format(workdir, step))
+  merged_params: nn.State = state.params
+  # 不能把rng merge进去！
+  # if len(state.rng_states) > 0:
+  #     merged_params = nn.State.merge(merged_params, state.rng_states)
+  if len(state.batch_stats) > 0:
+    merged_params = nn.State.merge(merged_params, state.batch_stats)
+  checkpoints.save_checkpoint_multiprocess(workdir, {
+    'mo_xing': merged_params,
+    'you_hua_qi': state.opt_state,
+    'step': step
+  }, step, keep=2, orbax_checkpointer=checkpointer)
+  # NOTE: this is tang, since "keep=2" means keeping the most recent 3 checkpoints.
 
 # pmean only works inside pmap because it needs an axis name.
 # This function will average the inputs across all devices.
@@ -646,6 +690,7 @@ def just_evaluate(
   dtype = jnp.bfloat16 if model_config.half_precision else jnp.float32
   global_seed(training_config.seed)
   sigmas = get_sigmas(sampling_config)
+  image_size = dataset_config.image_size
 
   ########### Create Model ###########
   model_cls = getattr(ncsnv2, model_config.name)
@@ -666,7 +711,7 @@ def just_evaluate(
   learning_rate_fn = training_config.learning_rate
 
   ########### Create Train State ###########
-  state = create_train_state(model, training_config, learning_rate_fn)
+  state = create_train_state(rngs, training_config, model, image_size, learning_rate_fn)
   assert training_config.get('load_from',None) is not None, 'Must provide a checkpoint path for evaluation'
   if not os.path.isabs(training_config.load_from):
     raise ValueError('Checkpoint path must be absolute')

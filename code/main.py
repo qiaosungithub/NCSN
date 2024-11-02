@@ -70,7 +70,10 @@ def main(argv):
   #   with jax.disable_jit():
   #     train.train_and_evaluate(FLAGS.config, FLAGS.workdir)
   # else:
-  train.train_and_evaluate(FLAGS.config, FLAGS.workdir)
+  if FLAGS.config.training.load_from is not None:
+    train.just_evaluate(FLAGS.config, FLAGS.workdir)
+  else:
+    train.train_and_evaluate(FLAGS.config, FLAGS.workdir)
 
 
 if __name__ == '__main__':

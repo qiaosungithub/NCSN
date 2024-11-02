@@ -7,7 +7,7 @@ training:
     log_per_step: 1
     wandb: False
     checkpoint_per_epoch: 1000
-    # load_from: /kmh-nfs-ssd-eu-mount/code/qiao/NCSN/sqa_NCSN/code/fake_tmp
+    # load_from: /kmh-nfs-us-mount/logs/sqa/sqa_NCSNv2/20241101_030317_2ml2nf_kmh-tpuvm-v2-32-1__b_lr_ep_torchvision_r50_eval/checkpoint_5684
 model:
     name: NCSNv2_base
     activation: elu
