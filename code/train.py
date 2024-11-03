@@ -22,7 +22,7 @@ from torch.utils.data import DataLoader
 from utils.utils import train_set_, val_set_, get_sigmas, save_img, corruption
 import ncsnv2
 
-from utils.display_utils import show_dict, display_model
+from utils.display_utils import show_dict, display_model, count_params
 from functools import partial
 from flax.training.train_state import TrainState as FlaxTrainState
 import flax.nnx as nn
@@ -145,7 +145,8 @@ def sample_step(state:NNXTrainState, rng_init, sigmas, config, epoch, verbose=Fa
     rngs=rng_init,
     whole_process=True,
     clamp=False,
-    verbose=verbose
+    verbose=verbose, 
+    show_freq=5
   )
   dir=config.save_dir + "sample_process/"
   g = all_samples.shape[0]
@@ -468,6 +469,7 @@ def train_and_evaluate(
     config=config
   )
   model = model_init_fn(rngs=rngs)
+  show_dict(f'number of model parameters:{count_params(model)}')
   show_dict(display_model(model))
 
   ########### Create LR FN ###########

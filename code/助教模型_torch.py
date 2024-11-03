@@ -1,128 +1,177 @@
 import torch
 import torch.nn as nn
+import torch.nn.functional as F
+# from config import CONFIG
 
-class ResidualConvBlock(nn.Module):
-    def __init__(self, in_channels, out_channels):
+class GELU(nn.Module):
+    def forward(self,x):
+        return 0.5 * x * (1 + torch.tanh(0.7978845608 * (x + 0.044715 * x**3)))
+
+class FCEmb(nn.Module):
+
+    def __init__(self,dim):
         super().__init__()
-        self.same_channels = in_channels==out_channels
+        self.net = nn.Sequential(
+            nn.Linear(1, dim),
+            GELU(),
+            nn.Linear(dim, dim),
+        )
+
+    def forward(self,x):
+        return self.net(x.unsqueeze(-1))
+    
+class Attention(nn.Module):
+
+    def __init__(self,dim,head,attn_dim=None):
+        super().__init__()
+        self.head = head
+        self.scale = dim ** -0.5
+        self.attn_dim = attn_dim if attn_dim is not None else dim//2
+        self.head_dim = self.attn_dim // head
+        self.Q = nn.Conv2d(dim, self.attn_dim,kernel_size=1, bias=False)
+        self.K = nn.Conv2d(dim, self.attn_dim,kernel_size=1, bias=False)
+        self.V = nn.Conv2d(dim, self.attn_dim,kernel_size=1, bias=False)
+        self.out = nn.Conv2d(self.attn_dim, dim,kernel_size=1, bias=False)
+
+    def forward(self,query, context):
+        b,c,h,w = query.shape
+        q = self.Q(query).reshape(b, self.head, self.head_dim, h*w)
+        k = self.K(context).reshape(b, self.head, self.head_dim, h*w)
+        v = self.V(context).reshape(b, self.head, self.head_dim, h*w)
+        score = torch.einsum('bhdi,bhdj->bhij', q, k) * self.scale
+        attn = F.softmax(score, dim=-1)
+        out = torch.einsum('bhij,bhdj->bhdi', attn, v).reshape(b, self.attn_dim, h, w)
+        return self.out(out)
+    
+class ScaleOnlyLayerNorm(nn.Module):
+
+    def __init__(self, dim):
+        super().__init__()
+        self.scale = nn.Parameter(torch.ones(dim))
+        self.norm = nn.LayerNorm(dim,elementwise_affine=False)
+    
+    def forward(self, x):
+        x = x.permute(0,2,3,1)
+        return (self.norm(x) * self.scale).permute(0,3,1,2)
+    
+class ResBlock(nn.Module):
+
+    def __init__(self,in_channel, out_channel,kernel=3):
+        super().__init__()
+        self.in_channel = in_channel
+        self.out_channel = out_channel
         self.conv1 = nn.Sequential(
-            nn.Conv2d(in_channels, out_channels, 3, 1, 1),
-            nn.BatchNorm2d(out_channels),
-            nn.GELU(),
+            nn.Conv2d(in_channel,out_channel,kernel,padding=kernel//2),
+            nn.BatchNorm2d(out_channel),
+            GELU(),
         )
         self.conv2 = nn.Sequential(
-            nn.Conv2d(out_channels, out_channels, 3, 1, 1),
-            nn.BatchNorm2d(out_channels),
-            nn.GELU(),
+            nn.Conv2d(out_channel,out_channel,kernel,padding=kernel//2),
+            nn.BatchNorm2d(out_channel),
+            GELU(),
         )
 
-    def forward(self, x: torch.Tensor) -> torch.Tensor:
-        x1 = self.conv1(x)
-        x2 = self.conv2(x1)
-        if self.same_channels:
-            out = x + x2
-        else:
-            out = x1 + x2
-        return out / 1.414
+    def forward(self,x):
+        x = self.conv1(x)
+        xc = x.clone()
+        x = self.conv2(x)
+        return x + xc
 
+class Block(nn.Module):
 
-class UnetDown(nn.Module):
-    def __init__(self, in_channels, out_channels):
-        super(UnetDown, self).__init__()
-        layers = [ResidualConvBlock(in_channels, out_channels), nn.MaxPool2d(2)]
-        self.model = nn.Sequential(*layers)
+    def __init__(self,in_channels,out_channels,t_dim,layer=2,kernel=3,attn=False,attn_head=4,attn_dim=None,res=False):
+        super().__init__()
+        self.have_attn = attn
+        # self.init_conv = nn.Conv2d(in_channels,out_channels,kernel_size=kernel,padding=kernel//2)
+        # self.t_net = nn.Linear(t_dim,out_channels)
+        self.t_net = FCEmb(in_channels)
+        self.layers = layer
+        if attn:
+            raise NotImplementedError()
+            self.attn = nn.ModuleList([Attention(out_channels,attn_head,attn_dim) for _ in range(layer)])
+            self.pre_norm = ScaleOnlyLayerNorm(out_channels)
+        self.have_res = res
+        if res:
+            self.res = nn.ModuleList([ResBlock(in_channel=out_channels,out_channel=out_channels) for _ in range(layer)])
 
-    def forward(self, x):
-        return self.model(x)
-
-
-class UnetUp(nn.Module):
-    def __init__(self, in_channels, out_channels):
-        super(UnetUp, self).__init__()
-        layers = [
-            nn.ConvTranspose2d(in_channels, out_channels, 2, 2),
-            ResidualConvBlock(out_channels, out_channels),
-            ResidualConvBlock(out_channels, out_channels),
-        ]
-        self.model = nn.Sequential(*layers)
-
-    def forward(self, x, skip):
-        x = torch.cat((x, skip), 1)
-        x = self.model(x)
+    def forward(self,x,t):
+        t1 = self.t_net(t)
+        x = x + t1.unsqueeze(-1).unsqueeze(-1)
+        for l in range(self.layers):
+            if self.have_attn:
+                x = self.pre_norm(x.permute(0,2,3,1)).permute(0,3,1,2)
+                x = self.attn[l](x,x)
+            if self.have_res:
+                x = self.res[l](x)
         return x
+    
+class UNet(nn.Module):
 
+    def __init__(self, t_dim=32):
+        super().__init__()
+        self.init_conv = nn.Conv2d(1,128,kernel_size=3,padding=1)
+        assert CONFIG.condition_type == 't', NotImplementedError()
 
-class EmbedFC(nn.Module):
-    def __init__(self, input_dim, emb_dim):
-        super(EmbedFC, self).__init__()
-        self.input_dim = input_dim
-        layers = [
-            nn.Linear(input_dim, emb_dim),
-            nn.GELU(),
-            nn.Linear(emb_dim, emb_dim),
-        ]
-        self.model = nn.Sequential(*layers)
-
-    def forward(self, x):
-        x = x.view(-1, self.input_dim)
-        return self.model(x)
-
-
-class ContextUnet(nn.Module):
-    def __init__(self, in_channels, n_feat = 256, n_classes=10):
-        super(ContextUnet, self).__init__()
-
-        self.in_channels = in_channels
-        self.n_feat = n_feat
-        self.n_classes = n_classes
-
-        self.init_conv = ResidualConvBlock(in_channels, n_feat)
-
-        self.down1 = UnetDown(n_feat, n_feat)
-        self.down2 = UnetDown(n_feat, 2 * n_feat)
-
-        self.to_vec = nn.Sequential(nn.AvgPool2d(7), nn.GELU())
-
-        self.timeembed1 = EmbedFC(1, 2*n_feat)
-        self.timeembed2 = EmbedFC(1, 1*n_feat)
-        self.contextembed1 = EmbedFC(n_classes, 2*n_feat)
-        self.contextembed2 = EmbedFC(n_classes, 1*n_feat)
-
-        self.up0 = nn.Sequential(
-            nn.ConvTranspose2d(2 * n_feat, 2 * n_feat, 7, 7),
-            nn.GroupNorm(8, 2 * n_feat),
-            nn.ReLU(),
+        # self.t_emb = nn.Embedding(CONFIG.L,t_dim)
+        self.t_emb = FCEmb(t_dim)
+        self.up = nn.Sequential(
+            # Block(32,64,t_dim,layer=2,res=True,attn=False),
+            ResBlock(128,128),
+            nn.AvgPool2d(2),
+            # Block(64,128,t_dim,layer=2,res=True,attn=False),
+            ResBlock(128,256),
+            nn.AvgPool2d(2),
+        )
+        # self.middle = Block(128,128,t_dim,layer=2,res=True,attn=True)
+        self.middle = nn.Sequential(
+            # ResBlock(256,256),
+            # ResBlock(256,256),
+            nn.AvgPool2d(7),
+            GELU(),
+            nn.ConvTranspose2d(in_channels=256,out_channels=256,kernel_size=7,stride=7),
+        )
+        self.down = nn.Sequential(
+            # nn.Upsample(scale_factor=2),
+            nn.ConvTranspose2d(in_channels=512,out_channels=128,kernel_size=2,stride=2),
+            Block(128,128,t_dim=1,layer=2,res=True,attn=False),
+            # nn.Upsample(scale_factor=2),
+            nn.ConvTranspose2d(in_channels=256,out_channels=128,kernel_size=2,stride=2),
+            Block(128,128,t_dim=1,layer=2,res=True,attn=False),
+        )
+        # self.end = nn.Conv2d(32,1,kernel_size=3,padding=1)
+        self.end = nn.Sequential(
+            nn.Conv2d(256,128,kernel_size=3,padding=1),
+            ScaleOnlyLayerNorm(128),
+            GELU(),
+            nn.Conv2d(128,1,kernel_size=3,padding=1),
         )
 
-        self.up1 = UnetUp(4 * n_feat, n_feat)
-        self.up2 = UnetUp(2 * n_feat, n_feat)
-        self.out = nn.Sequential(
-            nn.Conv2d(2 * n_feat, n_feat, 3, 1, 1),
-            nn.GroupNorm(8, n_feat),
-            nn.ReLU(),
-            nn.Conv2d(n_feat, self.in_channels, 3, 1, 1),
-        )
-
-    def forward(self, x, c, t, context_mask):
+    def forward(self,x,t):
         x = self.init_conv(x)
-        down1 = self.down1(x)
-        down2 = self.down2(down1)
-        hiddenvec = self.to_vec(down2)
-
-        c = nn.functional.one_hot(c, num_classes=self.n_classes).type(torch.float)
-
-        context_mask = context_mask[:, None]
-        context_mask = context_mask.repeat(1,self.n_classes)
-        context_mask = (-1*(1-context_mask)) # need to flip 0 <-> 1
-        c = c * context_mask
-
-        cemb1 = self.contextembed1(c).view(-1, self.n_feat * 2, 1, 1)
-        temb1 = self.timeembed1(t).view(-1, self.n_feat * 2, 1, 1)
-        cemb2 = self.contextembed2(c).view(-1, self.n_feat, 1, 1)
-        temb2 = self.timeembed2(t).view(-1, self.n_feat, 1, 1)
-
-        up1 = self.up0(hiddenvec)
-        up2 = self.up1(cemb1*up1+ temb1, down2)
-        up3 = self.up2(cemb2*up2+ temb2, down1)
-        out = self.out(torch.cat((up3, x), 1))
-        return out
+        xc = x.clone()
+        t = t.float()
+        # t = self.t_emb(t.float())
+        xs = []
+        for i,ly in enumerate(self.up):
+            if isinstance(ly,ResBlock):
+                x = ly(x)
+            else: # AvgPool2d
+                x = ly(x)
+                xs.append(x)
+        # x = self.middle(x,t)
+        x = self.middle(x)
+        # print('after middle, x.shape:', x.shape)
+        # print('cached shape:',[c.shape for c in xs])
+        for i,ly in enumerate(self.down):
+            if isinstance(ly,nn.ConvTranspose2d):
+                # x = x + xs.pop()
+                x = torch.cat([x,xs.pop()],dim=1)
+                x = ly(x)
+            else: # Upsample
+                x = ly(x,t)
+        return self.end(torch.cat([x,xc],dim=1))
+    
+if __name__ == '__main__':
+    model = UNet()
+    print('number of parameters:', sum(p.numel() for p in model.parameters()))
+    print(model(torch.randn(7,1,28,28),torch.randn(7,)).shape)

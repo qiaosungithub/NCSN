@@ -11,7 +11,7 @@ from jax import lax
 def apply_langevin(state, x, alpha, noise, indices, mask=None):
     grad, _, _ = state.apply_fn(state.graphdef, state.params, state.rng_states, state.batch_stats, state.useless_variable_state, False, x, indices)
     if mask is not None:
-        x = x + (alpha / 2 * grad + jnp.sqrt(alpha) * noise) * mask
+        x = x + (alpha / 2 * grad + jnp.sqrt(alpha) * noise) * (1-mask)
     else:
         x = x + alpha / 2 * grad + jnp.sqrt(alpha) * noise
     return x, grad
@@ -21,7 +21,7 @@ fast_apply_langevin = jax.pmap(
     axis_name='batch',
 )
 
-def langevin(state, shape, sigmas, eps, T, rngs, whole_process=False, clamp=False, verbose=False):
+def langevin(state, shape, sigmas, eps, T, rngs, whole_process=False, clamp=False, verbose=False, show_freq=1):
     """
     rngs: a Rng class instance
     """
@@ -71,7 +71,7 @@ def langevin(state, shape, sigmas, eps, T, rngs, whole_process=False, clamp=Fals
                 if jax.process_index() == 0:
                     print("level: {}, step_size: {}, grad_norm: {}, image_norm: {}, snr: {}, grad_mean_norm: {}".format(
                                     i, alpha, grad_norm.item(), image_norm.item(), snr.item(), grad_mean_norm.item()), flush=True)
-        if whole_process:
+        if whole_process and i % show_freq == 0:
             all_samples.append(x)
 
     if whole_process:

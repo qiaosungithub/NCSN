@@ -14,6 +14,8 @@ from utils.utils import get_sigmas
 from layers import *
 from normalization import get_normalization
 
+from 助教模型 import UNet
+
 知道=NotADirectoryError
 可能是list也可能是jnparray=知道
 
@@ -379,3 +381,5 @@ NCSNv2_base = partial(
     logit_transform=False,
     rescaled=False,
 )
+
+助教模型 = UNet

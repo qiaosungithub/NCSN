@@ -10,6 +10,7 @@ training:
     # load_from: /kmh-nfs-us-mount/logs/sqa/sqa_NCSNv2/20241101_030317_2ml2nf_kmh-tpuvm-v2-32-1__b_lr_ep_torchvision_r50_eval/checkpoint_5684
 model:
     name: NCSNv2_base
+    # name: 助教模型
     activation: elu
     ngf: 64
 dataset:
